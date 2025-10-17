@@ -15,6 +15,7 @@ import BonusFeatures from './components/BonusFeatures';
 import { supabase, Journey, JourneyLeg } from './lib/supabase';
 import { getTravelDNA } from './utils/travelDNA';
 import { analyzeTextMood } from './utils/sentimentClient';
+import { testDatabaseConnection } from './dbTest';
 
 import {
   generateAIStory,
@@ -31,6 +32,21 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
+  const [dbStatus, setDbStatus] = useState<{ connected: boolean; error?: string }>({ connected: true });
+
+  // Test database connection on mount
+  useEffect(() => {
+    testDatabaseConnection().then(result => {
+      setDbStatus({ 
+        connected: result.connected, 
+        error: result.error 
+      });
+      if (!result.connected) {
+        console.warn('⚠️ Database connection issue:', result.error);
+        console.log('💡 App will work in demo mode - journeys stored in memory only');
+      }
+    });
+  }, []);
 
   useEffect(() => {
     if (view === 'explore') {
@@ -155,7 +171,20 @@ function App() {
             </div>
             <div>
               <h1 className="text-xl font-bold text-white">Memory of Journeys</h1>
-              <p className="text-xs text-gray-400">Powered by MariaDB Vector</p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-gray-400">Powered by Supabase</p>
+                {dbStatus.connected ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-green-400">
+                    <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+                    Connected
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-xs text-yellow-400" title={dbStatus.error}>
+                    <span className="w-2 h-2 bg-yellow-400 rounded-full"></span>
+                    Demo Mode
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 
