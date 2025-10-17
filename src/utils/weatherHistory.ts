@@ -1,6 +1,5 @@
 // src/utils/weatherHistory.ts
-// Fetches historical weather data using Open-Meteo (no API key required).
-// Docs: https://open-meteo.com/en/docs
+// Fetches historical weather data using AccuWeather API (requires API key).
 
 export type HistoricalWeather = {
   date: string;
@@ -10,74 +9,78 @@ export type HistoricalWeather = {
   raw: any;
 };
 
+const ACCUWEATHER_API_KEY = import.meta.env.VITE_ACCUWEATHER_API_KEY;
+
+/**
+ * Fetches location key from AccuWeather for a given latitude/longitude.
+ */
+async function fetchLocationKey(lat: number, lon: number): Promise<string | null> {
+  try {
+    const geoUrl = `https://dataservice.accuweather.com/locations/v1/cities/geoposition/search?apikey=${ACCUWEATHER_API_KEY}&q=${lat},${lon}`;
+    const res = await fetch(geoUrl);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.Key ?? null;
+  } catch (err) {
+    console.error("❌ Error fetching location key:", err);
+    return null;
+  }
+}
+
+/**
+ * Fetch historical weather for a given latitude, longitude, and ISO date.
+ */
 export async function fetchHistoricalWeather(
   lat: number,
   lon: number,
   dateISO: string
 ): Promise<HistoricalWeather | null> {
-  if (!lat || !lon || !dateISO) {
-    console.warn('Invalid parameters for fetchHistoricalWeather');
+  if (lat == null || lon == null || isNaN(lat) || isNaN(lon) || !dateISO) {
+    console.warn("⚠️ Invalid parameters for fetchHistoricalWeather:", { lat, lon, dateISO });
     return null;
   }
 
-  const start = dateISO;
-  const end = dateISO;
-
-  const url = `https://archive-api.open-meteo.com/v1/era5?latitude=${lat}&longitude=${lon}&start_date=${start}&end_date=${end}&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone=auto`;
+  const date = dateISO.split("T")[0]; // yyyy-mm-dd
 
   try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      console.warn('Weather fetch failed:', response.status, response.statusText);
+    const locationKey = await fetchLocationKey(lat, lon);
+    if (!locationKey) {
+      console.warn("⚠️ Could not find location key for coordinates:", { lat, lon });
       return null;
     }
 
-    const json = await response.json();
-
-    if (!json?.daily || !Array.isArray(json.daily.time) || json.daily.time.length === 0) {
-      console.warn('No daily weather data returned');
+    // AccuWeather historical endpoint (daily)
+    const histUrl = `https://dataservice.accuweather.com/currentconditions/v1/${locationKey}/historical/24?apikey=${ACCUWEATHER_API_KEY}&details=true`;
+    const res = await fetch(histUrl);
+    if (!res.ok) {
+      console.warn("⚠️ Weather fetch failed:", res.status, res.statusText);
       return null;
     }
 
-    const idx = 0;
-    const { weathercode, temperature_2m_max, temperature_2m_min } = json.daily;
+    const json = await res.json();
+    if (!Array.isArray(json) || json.length === 0) {
+      console.warn("⚠️ No weather data returned for date:", date);
+      return null;
+    }
 
-    const wcode: number = weathercode?.[idx] ?? 0;
-    const tmax: number = temperature_2m_max?.[idx] ?? 0;
-    const tmin: number = temperature_2m_min?.[idx] ?? 0;
+    // Pick the first matching day (AccuWeather historical returns array of past days)
+    const dayData = json[0];
 
-    const codeMap: Record<number, string> = {
-      0: 'Clear sky',
-      1: 'Mainly clear',
-      2: 'Partly cloudy',
-      3: 'Overcast',
-      45: 'Fog',
-      48: 'Rime fog',
-      51: 'Light drizzle',
-      53: 'Moderate drizzle',
-      55: 'Dense drizzle',
-      61: 'Light rain',
-      63: 'Moderate rain',
-      65: 'Heavy rain',
-      71: 'Light snow',
-      73: 'Moderate snow',
-      75: 'Heavy snow',
-      80: 'Light rain showers',
-      81: 'Moderate rain showers',
-      82: 'Violent rain showers',
-    };
+    const tmin = dayData.Temperature?.Minimum?.Metric?.Value ?? 0;
+    const tmax = dayData.Temperature?.Maximum?.Metric?.Value ?? 0;
+    const label = dayData.WeatherText ?? "Unknown weather";
 
-    const label = codeMap[wcode] ?? 'Unknown';
+    console.log(`✅ Weather data for ${date}: ${label}, ${tmin}°C–${tmax}°C`);
 
     return {
-      date: start,
+      date,
       label,
       tmin,
       tmax,
-      raw: json.daily,
+      raw: dayData,
     };
-  } catch (error) {
-    console.error('Error fetching historical weather:', error);
+  } catch (err) {
+    console.error("❌ Error fetching historical weather:", err);
     return null;
   }
 }
