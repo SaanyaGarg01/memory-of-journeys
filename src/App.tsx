@@ -6,6 +6,7 @@ import JourneyCard from './components/JourneyCard';
 import StatsDashboard from './components/StatsDashboard';
 import FeaturesShowcase from './components/FeaturesShowcase';
 import { supabase, Journey, JourneyLeg } from './lib/supabase';
+
 import {
   generateAIStory,
   calculateSimilarityScore,
@@ -56,7 +57,7 @@ function App() {
   const handleJourneyComplete = async (data: {
     title: string;
     legs: JourneyLeg[];
-    journeyType: string;
+    journeyType: Journey['journey_type'];
     keywords: string[];
     departureDate: string;
     returnDate: string;
@@ -88,6 +89,7 @@ function App() {
 
       const tempJourney: Journey = {
         ...newJourney,
+        visibility: 'public' as Journey['visibility'],
         id: `temp-${Date.now()}`,
         user_id: 'demo-user',
         created_at: new Date().toISOString(),
@@ -252,7 +254,12 @@ function App() {
             </div>
 
             <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-8 border border-slate-700 shadow-2xl">
-              <JourneyBuilder onJourneyComplete={handleJourneyComplete} />
+              <JourneyBuilder
+              onJourneyComplete={(data: any) => {
+                // ensure we don't return a Promise where a void is expected and avoid strict type mismatch
+                void handleJourneyComplete(data as any);
+              }}
+              />
             </div>
 
             {loading && (

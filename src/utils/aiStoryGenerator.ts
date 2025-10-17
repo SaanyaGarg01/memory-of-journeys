@@ -1,6 +1,7 @@
 import { JourneyLeg } from '../lib/supabase';
 import { culturalInsights } from '../data/sampleAirports';
 
+// ✨ Main AI-like story generator (offline deterministic logic)
 export function generateAIStory(
   legs: JourneyLeg[],
   journeyType: string,
@@ -52,8 +53,10 @@ export function generateAIStory(
     ]
   };
 
-  const typeStory = journeyTypeStories[journeyType]?.[Math.floor(Math.random() * journeyTypeStories[journeyType].length)]
-    || 'embarked on an incredible journey';
+  const typeStory =
+    journeyTypeStories[journeyType]?.[
+      Math.floor(Math.random() * journeyTypeStories[journeyType].length)
+    ] || 'embarked on an incredible journey';
 
   let story = `This traveler ${typeStory} from ${startCity} to ${endCity}, `;
 
@@ -98,6 +101,7 @@ export function generateAIStory(
   return story;
 }
 
+// 🌏 Calculate similarity score (how close to common travel routes)
 export function calculateSimilarityScore(legs: JourneyLeg[]): number {
   const popularRoutes = [
     ['New Delhi', 'Bangkok', 'Bali'],
@@ -109,8 +113,8 @@ export function calculateSimilarityScore(legs: JourneyLeg[]): number {
   ];
 
   const cities = legs.map(leg => leg.toCity);
-
   let maxSimilarity = 0;
+
   popularRoutes.forEach(route => {
     let matches = 0;
     route.forEach(city => {
@@ -124,23 +128,17 @@ export function calculateSimilarityScore(legs: JourneyLeg[]): number {
   return Math.min(100, Math.max(0, maxSimilarity + randomVariation));
 }
 
+// 💎 Calculate rarity score (how unique or offbeat a journey is)
 export function calculateRarityScore(legs: JourneyLeg[], journeyType: string): number {
   let rarityScore = 50;
 
-  if (legs.length === 1) {
-    rarityScore = 20;
-  } else if (legs.length === 2) {
-    rarityScore = 35;
-  } else if (legs.length >= 5) {
-    rarityScore += 25;
-  }
+  if (legs.length === 1) rarityScore = 20;
+  else if (legs.length === 2) rarityScore = 35;
+  else if (legs.length >= 5) rarityScore += 25;
 
   const countries = Array.from(new Set(legs.flatMap(leg => [leg.fromCountry, leg.toCountry])));
-  if (countries.length >= 4) {
-    rarityScore += 20;
-  } else if (countries.length >= 3) {
-    rarityScore += 10;
-  }
+  if (countries.length >= 4) rarityScore += 20;
+  else if (countries.length >= 3) rarityScore += 10;
 
   const continents = countries.map(country => {
     const asianCountries = ['India', 'Thailand', 'Indonesia', 'Japan', 'Singapore', 'Hong Kong', 'South Korea'];
@@ -156,28 +154,46 @@ export function calculateRarityScore(legs: JourneyLeg[], journeyType: string): n
   });
 
   const uniqueContinents = Array.from(new Set(continents));
-  if (uniqueContinents.length >= 3) {
-    rarityScore += 15;
-  }
-
-  if (['honeymoon', 'adventure'].includes(journeyType)) {
-    rarityScore += 5;
-  }
+  if (uniqueContinents.length >= 3) rarityScore += 15;
+  if (['honeymoon', 'adventure'].includes(journeyType)) rarityScore += 5;
 
   const randomVariation = Math.random() * 10 - 5;
   return Math.min(100, Math.max(0, rarityScore + randomVariation));
 }
 
+// 🏛️ Extract cultural insights for all cities visited
 export function getCulturalInsights(legs: JourneyLeg[]): Record<string, any> {
   const insights: Record<string, any> = {};
-
   const cities = Array.from(new Set([...legs.map(leg => leg.fromCity), ...legs.map(leg => leg.toCity)]));
 
   cities.forEach(city => {
-    if (culturalInsights[city]) {
-      insights[city] = culturalInsights[city];
-    }
+    if (culturalInsights[city]) insights[city] = culturalInsights[city];
   });
 
   return insights;
+}
+
+// 🤖 Optional: Server-side LLM story generator wrapper (keeps compatibility with the rest of your code)
+export async function generateAIStoryWithLLM(
+  legs: any[],
+  journeyType: string,
+  keywords: string[],
+  options: any = {}
+) {
+  if (options.serverEndpoint) {
+    try {
+      const r = await fetch(options.serverEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ legs, journeyType, keywords })
+      });
+      if (r.ok) {
+        const json = await r.json();
+        return json.story ?? '';
+      }
+    } catch (e) {
+      console.warn('LLM story generation failed, falling back to local.', e);
+    }
+  }
+  return generateAIStory(legs, journeyType, keywords);
 }

@@ -2,6 +2,9 @@ import { useState } from 'react';
 import { Plus, X, MapPin, Calendar, Sparkles } from 'lucide-react';
 import { JourneyLeg } from '../lib/supabase';
 import { sampleAirports } from '../data/sampleAirports';
+import { analyzeTextMood } from '../utils/sentimentClient';
+import { fetchHistoricalWeather } from '../utils/weatherHistory';
+import { getTravelDNA} from '../utils/travelDNA';
 
 interface JourneyBuilderProps {
   onJourneyComplete: (data: {
@@ -11,17 +14,23 @@ interface JourneyBuilderProps {
     keywords: string[];
     departureDate: string;
     returnDate: string;
+    moodInsights?: any;
+    weatherHistory?: any;
+    travelDNA?: any;
   }) => void;
 }
 
 export default function JourneyBuilder({ onJourneyComplete }: JourneyBuilderProps) {
   const [title, setTitle] = useState('');
-  const [legs, setLegs] = useState<JourneyLeg[]>([{ from: '', to: '', fromCity: '', toCity: '', fromCountry: '', toCountry: '' }]);
+  const [legs, setLegs] = useState<JourneyLeg[]>([
+    { from: '', to: '', fromCity: '', toCity: '', fromCountry: '', toCountry: '' },
+  ]);
   const [journeyType, setJourneyType] = useState('solo');
   const [keywords, setKeywords] = useState<string[]>([]);
   const [keywordInput, setKeywordInput] = useState('');
   const [departureDate, setDepartureDate] = useState('');
   const [returnDate, setReturnDate] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const addLeg = () => {
     setLegs([...legs, { from: '', to: '', fromCity: '', toCity: '', fromCountry: '', toCountry: '' }]);
@@ -35,7 +44,7 @@ export default function JourneyBuilder({ onJourneyComplete }: JourneyBuilderProp
 
   const updateLeg = (index: number, field: 'from' | 'to', value: string) => {
     const newLegs = [...legs];
-    const airport = sampleAirports.find(a => a.iata === value);
+    const airport = sampleAirports.find((a) => a.iata === value);
 
     if (field === 'from' && airport) {
       newLegs[index].from = value;
@@ -58,23 +67,73 @@ export default function JourneyBuilder({ onJourneyComplete }: JourneyBuilderProp
   };
 
   const removeKeyword = (keyword: string) => {
-    setKeywords(keywords.filter(k => k !== keyword));
+    setKeywords(keywords.filter((k) => k !== keyword));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    const validLegs = legs.filter(leg => leg.from && leg.to);
+    const validLegs = legs.filter((leg) => leg.from && leg.to);
 
     if (title && validLegs.length > 0 && departureDate) {
-      onJourneyComplete({
-        title,
-        legs: validLegs,
-        journeyType,
-        keywords,
-        departureDate,
-        returnDate: returnDate || departureDate,
-      });
+      setLoading(true);
+      try {
+        // Analyze journey sentiment
+        const moodText = [title, journeyType, ...keywords].join(' ');
+        const moodInsights = await analyzeTextMood(moodText);
+
+        // Fetch weather for each destination city (using Open-Meteo)
+        const weatherHistory = await Promise.all(
+          validLegs.map(async (leg) => {
+            // Find the airport entry for the destination IATA to get coordinates
+            const airport = sampleAirports.find((a) => a.iata === leg.to);
+            if (!airport) {
+              console.warn('No airport found for', leg.to, leg.toCity);
+              return { city: leg.toCity, data: null };
+            }
+
+            // support common coordinate property names (latitude/longitude or lat/lon)
+            const lat = (airport as any).latitude ?? (airport as any).lat;
+            const lon = (airport as any).longitude ?? (airport as any).lon;
+
+            if (lat == null || lon == null) {
+              console.warn('No coordinates available for', leg.to, leg.toCity);
+              return { city: leg.toCity, data: null };
+            }
+
+            return {
+              city: leg.toCity,
+              data: await fetchHistoricalWeather(Number(lat), Number(lon), departureDate),
+            };
+          })
+        );
+
+        // Compute Travel DNA
+        const travelDNA = getTravelDNA(validLegs);
+
+        onJourneyComplete({
+          title,
+          legs: validLegs,
+          journeyType,
+          keywords,
+          departureDate,
+          returnDate: returnDate || departureDate,
+          moodInsights,
+          weatherHistory,
+          travelDNA,
+        });
+      } catch (error) {
+        console.error('Journey enrichment failed:', error);
+        onJourneyComplete({
+          title,
+          legs: validLegs,
+          journeyType,
+          keywords,
+          departureDate,
+          returnDate: returnDate || departureDate,
+        });
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -89,10 +148,9 @@ export default function JourneyBuilder({ onJourneyComplete }: JourneyBuilderProp
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Journey Title */}
       <div>
-        <label className="block text-sm font-medium text-gray-300 mb-2">
-          Journey Title
-        </label>
+        <label className="block text-sm font-medium text-gray-300 mb-2">Journey Title</label>
         <input
           type="text"
           value={title}
@@ -103,10 +161,9 @@ export default function JourneyBuilder({ onJourneyComplete }: JourneyBuilderProp
         />
       </div>
 
+      {/* Journey Type */}
       <div>
-        <label className="block text-sm font-medium text-gray-300 mb-2">
-          Journey Type
-        </label>
+        <label className="block text-sm font-medium text-gray-300 mb-2">Journey Type</label>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           {journeyTypes.map((type) => (
             <button
@@ -126,6 +183,7 @@ export default function JourneyBuilder({ onJourneyComplete }: JourneyBuilderProp
         </div>
       </div>
 
+      {/* Dates */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -155,6 +213,7 @@ export default function JourneyBuilder({ onJourneyComplete }: JourneyBuilderProp
         </div>
       </div>
 
+      {/* Route Builder */}
       <div>
         <label className="block text-sm font-medium text-gray-300 mb-2">
           <MapPin className="inline w-4 h-4 mr-1" />
@@ -214,10 +273,9 @@ export default function JourneyBuilder({ onJourneyComplete }: JourneyBuilderProp
         </button>
       </div>
 
+      {/* Keywords */}
       <div>
-        <label className="block text-sm font-medium text-gray-300 mb-2">
-          Keywords
-        </label>
+        <label className="block text-sm font-medium text-gray-300 mb-2">Keywords</label>
         <div className="flex gap-2 mb-2">
           <input
             type="text"
@@ -256,12 +314,16 @@ export default function JourneyBuilder({ onJourneyComplete }: JourneyBuilderProp
         )}
       </div>
 
+      {/* Submit */}
       <button
         type="submit"
-        className="w-full py-4 bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-semibold rounded-lg hover:from-blue-600 hover:to-cyan-600 transition-all transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2 shadow-lg shadow-blue-500/50"
+        disabled={loading}
+        className={`w-full py-4 bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-semibold rounded-lg flex items-center justify-center gap-2 shadow-lg transition-all ${
+          loading ? 'opacity-70 cursor-not-allowed' : 'hover:from-blue-600 hover:to-cyan-600 hover:scale-[1.02] active:scale-[0.98]'
+        }`}
       >
         <Sparkles className="w-5 h-5" />
-        Generate Journey Story
+        {loading ? 'Analyzing your Journey...' : 'Generate Journey Story'}
       </button>
     </form>
   );

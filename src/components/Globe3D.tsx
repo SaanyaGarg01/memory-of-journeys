@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { JourneyLeg } from '../lib/supabase';
 
+
 interface Globe3DProps {
   journeyLegs: JourneyLeg[];
   className?: string;
@@ -40,11 +41,16 @@ export default function Globe3D({ journeyLegs, className = '' }: Globe3DProps) {
 
       ctx.strokeStyle = 'rgba(147, 197, 253, 0.3)';
       ctx.lineWidth = 1;
+
       for (let i = 0; i < 12; i++) {
         const angle = (i / 12) * Math.PI * 2 + rotation;
-        ctx.beginPath();
-        ctx.ellipse(centerX, centerY, radius * Math.cos(angle * 0.5), radius, angle, 0, Math.PI * 2);
-        ctx.stroke();
+        const rx = Math.abs(radius * Math.cos(angle * 0.5)); // ensure positive
+        const ry = Math.abs(radius); // ensure positive
+        if (rx > 0 && ry > 0) {
+          ctx.beginPath();
+          ctx.ellipse(centerX, centerY, rx, ry, angle, 0, Math.PI * 2);
+          ctx.stroke();
+        }
       }
 
       for (let i = 0; i < 6; i++) {
@@ -57,7 +63,7 @@ export default function Globe3D({ journeyLegs, className = '' }: Globe3DProps) {
         }
       }
 
-      journeyLegs.forEach((leg, index) => {
+      journeyLegs.forEach((_leg, index) => {
         const progress = ((Date.now() / 2000 + index) % journeyLegs.length) / journeyLegs.length;
 
         const lat1 = (Math.random() - 0.5) * Math.PI;
