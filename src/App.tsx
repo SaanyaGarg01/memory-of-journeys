@@ -5,7 +5,16 @@ import JourneyBuilder from './components/JourneyBuilder';
 import JourneyCard from './components/JourneyCard';
 import StatsDashboard from './components/StatsDashboard';
 import FeaturesShowcase from './components/FeaturesShowcase';
+import EmotionalMap from './components/EmotionalMap';
+import TravelDNAProfile from './components/TravelDNAProfile';
+import FutureMemoryPlanner from './components/FutureMemoryPlanner';
+import MemoryMuseum from './components/MemoryMuseum';
+import ThenAndNow from './components/ThenAndNow';
+import WeatherMemory from './components/WeatherMemory';
+import BonusFeatures from './components/BonusFeatures';
 import { supabase, Journey, JourneyLeg } from './lib/supabase';
+import { getTravelDNA } from './utils/travelDNA';
+import { analyzeTextMood } from './utils/sentimentClient';
 
 import {
   generateAIStory,
@@ -14,7 +23,7 @@ import {
   getCulturalInsights,
 } from './utils/aiStoryGenerator';
 
-type View = 'hero' | 'create' | 'explore';
+type View = 'hero' | 'create' | 'explore' | 'features';
 
 function App() {
   const [view, setView] = useState<View>('hero');
@@ -161,6 +170,17 @@ function App() {
             >
               <Search className="inline w-4 h-4 mr-2" />
               Explore
+            </button>
+            <button
+              onClick={() => setView('features')}
+              className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                view === 'features'
+                  ? 'bg-purple-500 text-white'
+                  : 'text-gray-300 hover:bg-slate-800'
+              }`}
+            >
+              <TrendingUp className="inline w-4 h-4 mr-2" />
+              AI Features
             </button>
             <button
               onClick={() => setView('create')}
@@ -332,6 +352,111 @@ function App() {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {view === 'features' && (
+          <div className="max-w-7xl mx-auto px-6 py-12">
+            <div className="mb-12 text-center">
+              <h2 className="text-5xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent mb-4">
+                AI-Powered Features
+              </h2>
+              <p className="text-xl text-slate-400">
+                Experience the future of travel memories with our advanced AI features
+              </p>
+            </div>
+
+            <div className="space-y-8">
+              {/* Emotional Map - Shows sentiment analysis of journeys */}
+              {journeys.length > 0 && (
+                <EmotionalMap
+                  emotionalData={journeys.flatMap(journey =>
+                    journey.legs.map((leg: JourneyLeg) => {
+                      const moodResult = analyzeTextMood(
+                        `${journey.title} ${journey.ai_story || ''} ${journey.keywords?.join(' ') || ''}`
+                      );
+                      return {
+                        date: journey.departure_date || new Date().toISOString(),
+                        location: `${leg.toCity}, ${leg.toCountry}`,
+                        score: moodResult.score / 5, // Normalize to -5 to 5
+                        emotion: moodResult.label
+                      };
+                    })
+                  ).slice(0, 10)}
+                />
+              )}
+
+              {/* Travel DNA Profile - Personality analysis */}
+              {journeys.length > 0 && (
+                <TravelDNAProfile
+                  personality={getTravelDNA(journeys.flatMap(j => j.legs))}
+                />
+              )}
+
+              {/* Future Memory Planner - AI destination suggestions */}
+              {journeys.length > 0 && (() => {
+                const dna = getTravelDNA(journeys.flatMap(j => j.legs));
+                return (
+                  <FutureMemoryPlanner
+                    travelPreferences={{
+                      explorer: dna.adventure || 0,
+                      wanderer: dna.city || 0,
+                      seeker: dna.culture || 0,
+                      relaxer: dna.nature || 0
+                    }}
+                  />
+                );
+              })()}
+
+              {/* Memory Museum - 3D gallery */}
+              <MemoryMuseum
+                journeys={journeys.slice(0, 10).map(journey => ({
+                  id: journey.id,
+                  title: journey.title,
+                  imageUrl: undefined,
+                  location: journey.legs[0] ? `${journey.legs[0].toCity}, ${journey.legs[0].toCountry}` : 'Unknown'
+                }))}
+              />
+
+              {/* Then & Now - Location comparison */}
+              {journeys.length > 0 && journeys[0].legs.length > 0 && (
+                <ThenAndNow
+                  location={`${journeys[0].legs[0].toCity}, ${journeys[0].legs[0].toCountry}`}
+                  thenDate={journeys[0].departure_date || new Date().toISOString()}
+                />
+              )}
+
+              {/* Weather Memory - Historical weather */}
+              {journeys.length > 0 && journeys[0].legs.length > 0 && (
+                <WeatherMemory
+                  location={`${journeys[0].legs[0].toCity}, ${journeys[0].legs[0].toCountry}`}
+                  date={journeys[0].departure_date || new Date().toISOString()}
+                  lat={0}
+                  lon={0}
+                />
+              )}
+
+              {/* Bonus Features */}
+              <BonusFeatures />
+
+              {/* Call to action */}
+              {journeys.length === 0 && (
+                <div className="text-center py-20 bg-gradient-to-br from-slate-900/50 to-slate-800/50 rounded-2xl border border-slate-700">
+                  <div className="text-6xl mb-4">✨</div>
+                  <h3 className="text-3xl font-bold text-white mb-4">Create Your First Journey</h3>
+                  <p className="text-slate-400 mb-8 max-w-2xl mx-auto">
+                    Start creating journeys to unlock all AI-powered features including emotional analysis,
+                    travel DNA profiling, and personalized destination predictions!
+                  </p>
+                  <button
+                    onClick={() => setView('create')}
+                    className="px-8 py-4 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold rounded-lg hover:from-purple-600 hover:to-pink-600 transition-all transform hover:scale-105"
+                  >
+                    Create Journey Now
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
