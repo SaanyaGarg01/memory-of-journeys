@@ -45,7 +45,7 @@ export default function BonusFeatures({ onFeatureClick }: BonusFeaturesProps) {
       title: 'Friend Memory Sync',
       description: 'Combine journeys with friends and let AI highlight shared moments and experiences',
       color: 'from-purple-500 to-pink-500',
-      available: false
+      available: true
     },
     {
       id: 'whispers',
@@ -53,7 +53,7 @@ export default function BonusFeatures({ onFeatureClick }: BonusFeaturesProps) {
       title: 'Memory Whispers',
       description: 'Receive weekly AI-generated letters from your past travel memories',
       color: 'from-indigo-500 to-violet-500',
-      available: false
+      available: true
     }
   ];
 
@@ -97,7 +97,7 @@ export default function BonusFeatures({ onFeatureClick }: BonusFeaturesProps) {
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-xl font-bold text-white mb-1">Quick Win Ideas</h3>
-            <p className="text-sm text-slate-300">Easy to implement, high impact features - 4 now available! ✨</p>
+            <p className="text-sm text-slate-300">All 6 bonus features now available! ✨</p>
           </div>
           <div className="text-4xl">🎉</div>
         </div>

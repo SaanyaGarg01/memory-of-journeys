@@ -16,6 +16,8 @@ import PostcardGenerator from './components/PostcardGenerator';
 import VoiceJournaling from './components/VoiceJournaling';
 import InteractiveGallery from './components/InteractiveGallery';
 import MemoryTemperature from './components/MemoryTemperature';
+import FriendMemorySync from './components/FriendMemorySync';
+import MemoryWhispers from './components/MemoryWhispers';
 import { supabase, Journey, JourneyLeg } from './lib/supabase';
 import { getTravelDNA } from './utils/travelDNA';
 import { analyzeTextMood } from './utils/sentimentClient';
@@ -29,7 +31,7 @@ import {
 } from './utils/aiStoryGenerator';
 
 type View = 'hero' | 'create' | 'explore' | 'features';
-type BonusFeatureView = 'overview' | 'postcards' | 'temperature' | 'voice' | 'gallery';
+type BonusFeatureView = 'overview' | 'postcards' | 'temperature' | 'voice' | 'gallery' | 'friends' | 'whispers';
 
 function App() {
   const [view, setView] = useState<View>('hero');
@@ -529,6 +531,30 @@ function App() {
                     ← Back to Bonus Features
                   </button>
                   <InteractiveGallery journeys={journeys} />
+                </div>
+              )}
+
+              {bonusFeatureView === 'friends' && (
+                <div className="space-y-4">
+                  <button
+                    onClick={() => setBonusFeatureView('overview')}
+                    className="text-slate-400 hover:text-white transition-colors"
+                  >
+                    ← Back to Bonus Features
+                  </button>
+                  <FriendMemorySync journeys={journeys} />
+                </div>
+              )}
+
+              {bonusFeatureView === 'whispers' && (
+                <div className="space-y-4">
+                  <button
+                    onClick={() => setBonusFeatureView('overview')}
+                    className="text-slate-400 hover:text-white transition-colors"
+                  >
+                    ← Back to Bonus Features
+                  </button>
+                  <MemoryWhispers journeys={journeys} />
                 </div>
               )}
 
