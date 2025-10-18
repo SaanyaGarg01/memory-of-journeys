@@ -36,6 +36,14 @@ import {
 type View = 'hero' | 'create' | 'explore' | 'features' | 'profile';
 type BonusFeatureView = 'overview' | 'postcards' | 'temperature' | 'voice' | 'gallery' | 'friends' | 'whispers';
 
+type ProfileData = {
+  id: string;
+  name: string;
+  email: string;
+  avatar_url?: string | null;
+  bio?: string | null;
+};
+
 function App(): JSX.Element {
   const [view, setView] = useState<View>('hero');
   const [bonusFeatureView, setBonusFeatureView] = useState<BonusFeatureView>('overview');
@@ -45,124 +53,122 @@ function App(): JSX.Element {
   const [filterType, setFilterType] = useState<string>('all');
   const [dbStatus, setDbStatus] = useState<{ connected: boolean; error?: string }>({ connected: true });
   const [user, setUser] = useState<User | null>(null);
-  const [profileData, setProfileData] = useState<any>(null);
+  const [profileData, setProfileData] = useState<ProfileData | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
 
   // Listen to Firebase auth changes
   useEffect(() => {
-  const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-    setUser(firebaseUser);
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setUser(firebaseUser);
 
-    if (firebaseUser) {
-      setProfileLoading(true);
-      try {
-        // 1️⃣ Check if profile exists
-        const { data, error } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', firebaseUser.uid)
-          .single();
-
-        if (error && error.code !== 'PGRST116') {
-          console.error('Supabase fetch error:', error);
-        }
-
-        if (!data) {
-          // 2️⃣ Create profile if it doesn't exist
-          const { data: inserted, error: insertError } = await supabase
+      if (firebaseUser) {
+        setProfileLoading(true);
+        try {
+          const { data, error } = await supabase
             .from('users')
-            .insert({
-              id: firebaseUser.uid,
-              name: firebaseUser.displayName || '',
-              email: firebaseUser.email || '',
-              avatar_url: firebaseUser.photoURL || '',
-              bio: ''
-            })
-            .select()
+            .select('*')
+            .eq('id', firebaseUser.uid)
             .single();
 
-          if (insertError) console.error('Error inserting new user:', insertError);
+          if (error && error.code !== 'PGRST116') console.error('Supabase fetch error:', error);
 
-          setProfileData(inserted);
-        } else {
-          setProfileData(data);
+          if (!data) {
+            const { data: inserted, error: insertError } = await supabase
+              .from('users')
+              .insert({
+                id: firebaseUser.uid,
+                name: firebaseUser.displayName || '',
+                email: firebaseUser.email || '',
+                avatar_url: firebaseUser.photoURL || null,
+                bio: ''
+              })
+              .select()
+              .single();
+
+            if (insertError) console.error('Error inserting new user:', insertError);
+            setProfileData(inserted ?? null);
+          } else {
+            setProfileData({
+              id: data.id,
+              name: data.name || '',
+              email: data.email || '',
+              avatar_url: data.avatar_url ?? '',
+              bio: data.bio ?? ''
+            });
+          }
+        } catch (err) {
+          console.error('Profile loading error:', err);
+        } finally {
+          setProfileLoading(false);
         }
-      } catch (err) {
-        console.error('Profile loading error:', err);
-      } finally {
-        setProfileLoading(false);
+      } else {
+        setProfileData(null);
       }
-    } else {
-      setProfileData(null);
-    }
-  });
+    });
 
-  return () => unsubscribe();
-}, []);
-
+    return () => unsubscribe();
+  }, []);
 
   // DB connection check
   useEffect(() => {
     testDatabaseConnection().then(result => setDbStatus({ connected: result.connected, error: result.error }));
   }, []);
 
-  // -------------------------
-  // Load profile immediately
+  // Load profile manually
   const loadProfile = async () => {
-  if (!user) return;
+    if (!user) return;
 
-  setProfileLoading(true);
-  try {
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', user.uid)
-      .single();
-
-    if (error && error.code !== 'PGRST116') {
-      // PGRST116 = no rows found, ignore
-      console.error('Supabase fetch error:', error);
-      alert('Failed to fetch profile from Supabase.');
-      setProfileData(null);
-      return;
-    }
-
-    if (!data) {
-      // If user not in DB, insert
-      const { data: inserted, error: insertError } = await supabase
+    setProfileLoading(true);
+    try {
+      const { data, error } = await supabase
         .from('users')
-        .insert({
-          id: user.uid,
-          name: user.displayName || '',
-          email: user.email || '',
-          avatar_url: user.photoURL || '',
-          bio: ''
-        })
-        .select()
+        .select('*')
+        .eq('id', user.uid)
         .single();
 
-      if (insertError) {
-        console.error('Error inserting new user:', insertError);
-        alert('Failed to create your profile. Try again.');
+      if (error && error.code !== 'PGRST116') {
+        console.error('Supabase fetch error:', error);
         setProfileData(null);
-      } else {
-        setProfileData(inserted);
+        return;
       }
-    } else {
-      setProfileData(data);
+
+      if (!data) {
+        const { data: inserted, error: insertError } = await supabase
+          .from('users')
+          .insert({
+            id: user.uid,
+            name: user.displayName || '',
+            email: user.email || '',
+            avatar_url: user.photoURL || null,
+            bio: ''
+          })
+          .select()
+          .single();
+
+        if (insertError) {
+          console.error('Error inserting new user:', insertError);
+          setProfileData(null);
+        } else {
+          setProfileData(inserted ?? null);
+        }
+      } else {
+        setProfileData({
+          id: data.id,
+          name: data.name || '',
+          email: data.email || '',
+          avatar_url: data.avatar_url ?? '',
+          bio: data.bio ?? ''
+        });
+      }
+    } catch (err) {
+      console.error('Unexpected error loading profile:', err);
+      setProfileData(null);
+    } finally {
+      setProfileLoading(false);
     }
-  } catch (err) {
-    console.error('Unexpected error loading profile:', err);
-    alert('An unexpected error occurred while loading your profile.');
-    setProfileData(null);
-  } finally {
-    setProfileLoading(false);
-  }
-};
+  };
 
-
-  // -------------------------
-  // Load journeys immediately
+  // Load journeys manually
   const loadJourneys = async () => {
     if (!user) return;
     setLoading(true);
@@ -180,7 +186,6 @@ function App(): JSX.Element {
     }
   };
 
-  // -------------------------
   // Google login
   const handleGoogleLogin = async () => {
     try { await signInWithPopup(auth, googleProvider); } 
@@ -197,8 +202,7 @@ function App(): JSX.Element {
     } catch (error) { console.error('Logout failed:', error); }
   };
 
-  // -------------------------
-  // Create journey
+  // Handle journey completion
   const handleJourneyComplete = async (data: {
     title: string;
     legs: JourneyLeg[];
@@ -231,74 +235,32 @@ function App(): JSX.Element {
         likes_count: 0,
         views_count: 0,
         id: '',
-        user_id: '',
-        created_at: '',
-        updated_at: ''
-      };
-
-      // Create temporary journey for immediate display
-      const tempJourney: Journey = {
-        ...newJourney,
-        visibility: 'public' as Journey['visibility'],
-        id: `temp-${Date.now()}`,
-        user_id: null as any, // Allow null for unauthenticated users
+        user_id: user.uid,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
 
-      // Add to local state immediately
-      setJourneys([tempJourney, ...journeys]);
-      
-      // Show success message
-      console.log('✅ Journey created successfully!');
-      
-      // Switch to explore view to see the journey
+      setJourneys(prev => [newJourney, ...prev]);
       setView('explore');
 
-      // Try to save to database (will work if tables exist and RLS allows)
-      try {
-        const { data: savedJourney, error } = await supabase
-          .from('journeys')
-          .insert([{ ...newJourney, user_id: null }])
-          .select()
-          .single();
+      const { data: savedJourney, error } = await supabase
+        .from('journeys')
+        .insert([newJourney])
+        .select()
+        .single();
 
-        if (error) {
-          console.warn('⚠️ Database save failed:', error.message);
-          console.log('💡 Journey saved locally. To persist to database:');
-          console.log('   1. Ensure tables are created (run migration SQL)');
-          console.log('   2. Add anonymous user policy (see fix_anonymous_journeys.sql)');
-          
-          // Show user-friendly message
-          setTimeout(() => {
-            alert('✅ Journey created!\n\n⚠️ Note: Saved locally only.\nRun database migration to persist data across sessions.');
-          }, 500);
-        } else {
-          console.log('✅ Journey saved to database:', savedJourney);
-          // Replace temp journey with real one from database
-          setJourneys(prevJourneys => {
-            const filtered = prevJourneys.filter(j => j.id !== tempJourney.id);
-            return [savedJourney as Journey, ...filtered];
-          });
-          
-          // Show success message
-          setTimeout(() => {
-            alert('✅ Journey created and saved successfully!');
-          }, 500);
-        }
-      } catch (dbError) {
-        console.warn('❌ Database error:', dbError);
-        console.log('💡 Journey saved locally only.');
+      if (error) console.warn('Database save failed:', error);
+      else {
+        setJourneys(prev => prev.map(j => j.id === '' ? savedJourney as Journey : j));
       }
     } catch (error) {
       console.error('Error creating journey:', error);
-      alert('Failed to create journey. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  // -------------------------
+  // Handle likes
   const handleLike = (journeyId: string) => {
     setJourneys(prev => prev.map(j => j.id === journeyId ? { ...j, likes_count: j.likes_count + 1 } : j));
   };
@@ -314,7 +276,7 @@ function App(): JSX.Element {
   });
 
   // -------------------------
-  // If not logged in
+  // Not logged in view
   if (!user) {
     return (
       <div className="flex flex-col items-center justify-center h-screen gap-6 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
@@ -381,30 +343,29 @@ function App(): JSX.Element {
         </div>
       </nav>
 
-      <div className="pt-20">
-     {view === 'profile' && (
+<div className="pt-20">
+        {view === 'profile' && (
   <div className="max-w-4xl mx-auto px-6 py-12">
     {profileLoading ? (
       <div className="text-center py-20 text-white">
         <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
         <p className="text-gray-400 mt-4">Loading profile...</p>
       </div>
-    ) : profileData ? (
+    ) : (
       <Profile
-        firebaseUser={user!}
-        profileData={profileData}
+        firebaseUser={user}
+        profileData={{
+          id: profileData?.id || user.uid,
+          name: profileData?.name || user.displayName || '',
+          email: profileData?.email || user.email || '',
+          avatar_url: profileData?.avatar_url || user.photoURL || '',
+          bio: profileData?.bio || ''
+        }}
         onProfileUpdate={setProfileData}
       />
-    ) : (
-      <div className="text-center py-20 text-white">
-        Failed to load profile.
-      </div>
     )}
   </div>
 )}
-
-
-
         {view === 'hero' && (
           <div>
             <HeroSection onGetStarted={() => setView('create')} />
