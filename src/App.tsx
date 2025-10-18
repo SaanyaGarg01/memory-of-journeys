@@ -120,29 +120,63 @@ function App() {
         views_count: 0,
       };
 
+      // Create temporary journey for immediate display
       const tempJourney: Journey = {
         ...newJourney,
         visibility: 'public' as Journey['visibility'],
         id: `temp-${Date.now()}`,
-        user_id: 'demo-user',
+        user_id: null as any, // Allow null for unauthenticated users
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
 
+      // Add to local state immediately
       setJourneys([tempJourney, ...journeys]);
+      
+      // Show success message
+      console.log('✅ Journey created successfully!');
+      
+      // Switch to explore view to see the journey
       setView('explore');
 
-      const { error } = await supabase
-        .from('journeys')
-        .insert([{ ...newJourney, user_id: 'demo-user' }]);
+      // Try to save to database (will work if tables exist and RLS allows)
+      try {
+        const { data: savedJourney, error } = await supabase
+          .from('journeys')
+          .insert([{ ...newJourney, user_id: null }])
+          .select()
+          .single();
 
-      if (error) {
-        console.error('Error saving journey:', error);
-      } else {
-        loadJourneys();
+        if (error) {
+          console.warn('⚠️ Database save failed:', error.message);
+          console.log('💡 Journey saved locally. To persist to database:');
+          console.log('   1. Ensure tables are created (run migration SQL)');
+          console.log('   2. Add anonymous user policy (see fix_anonymous_journeys.sql)');
+          
+          // Show user-friendly message
+          setTimeout(() => {
+            alert('✅ Journey created!\n\n⚠️ Note: Saved locally only.\nRun database migration to persist data across sessions.');
+          }, 500);
+        } else {
+          console.log('✅ Journey saved to database:', savedJourney);
+          // Replace temp journey with real one from database
+          setJourneys(prevJourneys => {
+            const filtered = prevJourneys.filter(j => j.id !== tempJourney.id);
+            return [savedJourney as Journey, ...filtered];
+          });
+          
+          // Show success message
+          setTimeout(() => {
+            alert('✅ Journey created and saved successfully!');
+          }, 500);
+        }
+      } catch (dbError) {
+        console.warn('❌ Database error:', dbError);
+        console.log('💡 Journey saved locally only.');
       }
     } catch (error) {
       console.error('Error creating journey:', error);
+      alert('Failed to create journey. Please try again.');
     } finally {
       setLoading(false);
     }
