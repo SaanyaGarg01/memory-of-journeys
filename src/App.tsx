@@ -13,7 +13,6 @@ import MemoryMuseum from './components/MemoryMuseum';
 import ThenAndNow from './components/ThenAndNow';
 import WeatherMemory from './components/WeatherMemory';
 import BonusFeatures from './components/BonusFeatures';
-import Profile from './components/Profile';
 import { supabase, Journey, JourneyLeg } from './lib/supabase';
 import { getTravelDNA } from './utils/travelDNA';
 import { analyzeTextMood } from './utils/sentimentClient';
@@ -27,10 +26,11 @@ import {
   getCulturalInsights,
 } from './utils/aiStoryGenerator';
 
-type View = 'hero' | 'create' | 'explore' | 'features' | 'profile';
+type View = 'hero' | 'create' | 'explore' | 'features';
 
 function App(): JSX.Element {
   const [view, setView] = useState<View>('hero');
+  const [bonusFeatureView, setBonusFeatureView] = useState<BonusFeatureView>('overview');
   const [journeys, setJourneys] = useState<Journey[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -222,20 +222,34 @@ function App(): JSX.Element {
         visibility: "public",
         likes_count: 0,
         views_count: 0,
-        user_id: user.uid,
+      };
+
+      const tempJourney: Journey = {
+        ...newJourney,
+        visibility: 'public' as Journey['visibility'],
         id: `temp-${Date.now()}`,
+        user_id: 'demo-user',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
 
-      setJourneys([newJourney, ...journeys]);
+      setJourneys([tempJourney, ...journeys]);
       setView('explore');
 
-      const { error } = await supabase.from('journeys').insert([newJourney]);
-      if (error) console.error('Error saving journey:', error);
-      else loadJourneys();
-    } catch (error) { console.error('Error creating journey:', error); }
-    finally { setLoading(false); }
+      const { error } = await supabase
+        .from('journeys')
+        .insert([{ ...newJourney, user_id: 'demo-user' }]);
+
+      if (error) {
+        console.error('Error saving journey:', error);
+      } else {
+        loadJourneys();
+      }
+    } catch (error) {
+      console.error('Error creating journey:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // -------------------------
@@ -584,7 +598,89 @@ function App(): JSX.Element {
               )}
 
               {/* Bonus Features */}
-              <BonusFeatures />
+              {bonusFeatureView === 'overview' && (
+                <BonusFeatures onFeatureClick={(featureId) => {
+                  setBonusFeatureView(featureId as BonusFeatureView);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }} />
+              )}
+
+              {bonusFeatureView === 'postcards' && (
+                <div className="space-y-4">
+                  <button
+                    onClick={() => setBonusFeatureView('overview')}
+                    className="text-slate-400 hover:text-white transition-colors"
+                  >
+                    ← Back to Bonus Features
+                  </button>
+                  <PostcardGenerator journeys={journeys} />
+                </div>
+              )}
+
+              {bonusFeatureView === 'temperature' && (
+                <div className="space-y-4">
+                  <button
+                    onClick={() => setBonusFeatureView('overview')}
+                    className="text-slate-400 hover:text-white transition-colors"
+                  >
+                    ← Back to Bonus Features
+                  </button>
+                  <MemoryTemperature journeys={journeys} />
+                </div>
+              )}
+
+              {bonusFeatureView === 'voice' && (
+                <div className="space-y-4">
+                  <button
+                    onClick={() => setBonusFeatureView('overview')}
+                    className="text-slate-400 hover:text-white transition-colors"
+                  >
+                    ← Back to Bonus Features
+                  </button>
+                  <VoiceJournaling onSave={(transcript) => {
+                    console.log('Voice transcript saved:', transcript);
+                    // You can add logic here to save the transcript to a journey
+                    alert('Voice transcript saved! You can now add this to a journey.');
+                    setBonusFeatureView('overview');
+                  }} />
+                </div>
+              )}
+
+              {bonusFeatureView === 'gallery' && (
+                <div className="space-y-4">
+                  <button
+                    onClick={() => setBonusFeatureView('overview')}
+                    className="text-slate-400 hover:text-white transition-colors"
+                  >
+                    ← Back to Bonus Features
+                  </button>
+                  <InteractiveGallery journeys={journeys} />
+                </div>
+              )}
+
+              {bonusFeatureView === 'friends' && (
+                <div className="space-y-4">
+                  <button
+                    onClick={() => setBonusFeatureView('overview')}
+                    className="text-slate-400 hover:text-white transition-colors"
+                  >
+                    ← Back to Bonus Features
+                  </button>
+                  <FriendMemorySync journeys={journeys} />
+                </div>
+              )}
+
+              {bonusFeatureView === 'whispers' && (
+                <div className="space-y-4">
+                  <button
+                    onClick={() => setBonusFeatureView('overview')}
+                    className="text-slate-400 hover:text-white transition-colors"
+                  >
+                    ← Back to Bonus Features
+                  </button>
+                  <MemoryWhispers journeys={journeys} />
+                </div>
+              )}
 
               {/* Call to action */}
               {journeys.length === 0 && (
