@@ -10,9 +10,16 @@ import EmotionalMap from './components/EmotionalMap';
 import TravelDNAProfile from './components/TravelDNAProfile';
 import FutureMemoryPlanner from './components/FutureMemoryPlanner';
 import MemoryMuseum from './components/MemoryMuseum';
+import Profile from './components/Profile';
 import ThenAndNow from './components/ThenAndNow';
 import WeatherMemory from './components/WeatherMemory';
 import BonusFeatures from './components/BonusFeatures';
+import PostcardGenerator from './components/PostcardGenerator';
+import VoiceJournaling from './components/VoiceJournaling';
+import InteractiveGallery from './components/InteractiveGallery';
+import MemoryTemperature from './components/MemoryTemperature';
+import FriendMemorySync from './components/FriendMemorySync';
+import MemoryWhispers from './components/MemoryWhispers';
 import { supabase, Journey, JourneyLeg } from './lib/supabase';
 import { getTravelDNA } from './utils/travelDNA';
 import { analyzeTextMood } from './utils/sentimentClient';
@@ -26,7 +33,8 @@ import {
   getCulturalInsights,
 } from './utils/aiStoryGenerator';
 
-type View = 'hero' | 'create' | 'explore' | 'features';
+type View = 'hero' | 'create' | 'explore' | 'features' | 'profile';
+type BonusFeatureView = 'overview' | 'postcards' | 'temperature' | 'voice' | 'gallery' | 'friends' | 'whispers';
 
 function App(): JSX.Element {
   const [view, setView] = useState<View>('hero');
@@ -222,31 +230,69 @@ function App(): JSX.Element {
         visibility: "public",
         likes_count: 0,
         views_count: 0,
+        id: '',
+        user_id: '',
+        created_at: '',
+        updated_at: ''
       };
 
+      // Create temporary journey for immediate display
       const tempJourney: Journey = {
         ...newJourney,
         visibility: 'public' as Journey['visibility'],
         id: `temp-${Date.now()}`,
-        user_id: 'demo-user',
+        user_id: null as any, // Allow null for unauthenticated users
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
 
+      // Add to local state immediately
       setJourneys([tempJourney, ...journeys]);
+      
+      // Show success message
+      console.log('✅ Journey created successfully!');
+      
+      // Switch to explore view to see the journey
       setView('explore');
 
-      const { error } = await supabase
-        .from('journeys')
-        .insert([{ ...newJourney, user_id: 'demo-user' }]);
+      // Try to save to database (will work if tables exist and RLS allows)
+      try {
+        const { data: savedJourney, error } = await supabase
+          .from('journeys')
+          .insert([{ ...newJourney, user_id: null }])
+          .select()
+          .single();
 
-      if (error) {
-        console.error('Error saving journey:', error);
-      } else {
-        loadJourneys();
+        if (error) {
+          console.warn('⚠️ Database save failed:', error.message);
+          console.log('💡 Journey saved locally. To persist to database:');
+          console.log('   1. Ensure tables are created (run migration SQL)');
+          console.log('   2. Add anonymous user policy (see fix_anonymous_journeys.sql)');
+          
+          // Show user-friendly message
+          setTimeout(() => {
+            alert('✅ Journey created!\n\n⚠️ Note: Saved locally only.\nRun database migration to persist data across sessions.');
+          }, 500);
+        } else {
+          console.log('✅ Journey saved to database:', savedJourney);
+          // Replace temp journey with real one from database
+          setJourneys(prevJourneys => {
+            const filtered = prevJourneys.filter(j => j.id !== tempJourney.id);
+            return [savedJourney as Journey, ...filtered];
+          });
+          
+          // Show success message
+          setTimeout(() => {
+            alert('✅ Journey created and saved successfully!');
+          }, 500);
+        }
+      } catch (dbError) {
+        console.warn('❌ Database error:', dbError);
+        console.log('💡 Journey saved locally only.');
       }
     } catch (error) {
       console.error('Error creating journey:', error);
+      alert('Failed to create journey. Please try again.');
     } finally {
       setLoading(false);
     }
