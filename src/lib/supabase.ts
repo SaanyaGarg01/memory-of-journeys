@@ -5,6 +5,19 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
+// ------------------ Types ------------------ //
+
+export type JourneyLeg = {
+  from: string;
+  to: string;
+  fromCity: string;
+  toCity: string;
+  fromCountry: string;
+  toCountry: string;
+  date?: string;
+  distance?: number;
+};
+
 export type Journey = {
   id: string;
   user_id: string;
@@ -26,17 +39,20 @@ export type Journey = {
   updated_at: string;
 };
 
-export type JourneyLeg = {
-  from: string;
-  to: string;
-  fromCity: string;
-  toCity: string;
-  fromCountry: string;
-  toCountry: string;
-  date?: string;
-  distance?: number;
+// ------------------ User Profile ------------------ //
+export type UserProfile = {
+  id: string;               // Firebase UID
+  name: string;
+  email: string;
+  avatar_url?: string;
+  bio?: string;
+  location?: string;
+  interests?: string[];
+  created_at?: string;
+  updated_at?: string;
 };
 
+// ------------------ Airport ------------------ //
 export type Airport = {
   id: number;
   name: string;

@@ -7,4 +7,10 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['lucide-react'],
   },
+  build: {
+    sourcemap: false, // disables source maps to avoid missing map warnings
+  },
+  esbuild: {
+    sourcemap: false, // prevents esbuild from trying to load missing maps in dev
+  },
 });

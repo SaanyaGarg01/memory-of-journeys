@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Compass, Plus, Search, TrendingUp } from 'lucide-react';
+// @ts-ignore
+import { Compass, Plus, Search, TrendingUp, LogOut, User as UserIcon } from 'lucide-react';
 import HeroSection from './components/HeroSection';
 import JourneyBuilder from './components/JourneyBuilder';
 import JourneyCard from './components/JourneyCard';
@@ -12,11 +13,13 @@ import MemoryMuseum from './components/MemoryMuseum';
 import ThenAndNow from './components/ThenAndNow';
 import WeatherMemory from './components/WeatherMemory';
 import BonusFeatures from './components/BonusFeatures';
+import Profile from './components/Profile';
 import { supabase, Journey, JourneyLeg } from './lib/supabase';
 import { getTravelDNA } from './utils/travelDNA';
 import { analyzeTextMood } from './utils/sentimentClient';
 import { testDatabaseConnection } from './dbTest';
-
+import { auth, googleProvider } from './lib/firebase';
+import { signInWithPopup, onAuthStateChanged, signOut, User } from 'firebase/auth';
 import {
   generateAIStory,
   calculateSimilarityScore,
@@ -24,52 +27,142 @@ import {
   getCulturalInsights,
 } from './utils/aiStoryGenerator';
 
-type View = 'hero' | 'create' | 'explore' | 'features';
+type View = 'hero' | 'create' | 'explore' | 'features' | 'profile';
 
-function App() {
+function App(): JSX.Element {
   const [view, setView] = useState<View>('hero');
   const [journeys, setJourneys] = useState<Journey[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
   const [dbStatus, setDbStatus] = useState<{ connected: boolean; error?: string }>({ connected: true });
+  const [user, setUser] = useState<User | null>(null);
+  const [profileData, setProfileData] = useState<any>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
 
-  // Test database connection on mount
+  // Listen to Firebase auth changes
   useEffect(() => {
-    testDatabaseConnection().then(result => {
-      setDbStatus({ 
-        connected: result.connected, 
-        error: result.error 
-      });
-      if (!result.connected) {
-        console.warn('⚠️ Database connection issue:', result.error);
-        console.log('💡 App will work in demo mode - journeys stored in memory only');
+  const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    setUser(firebaseUser);
+
+    if (firebaseUser) {
+      setProfileLoading(true);
+      try {
+        // 1️⃣ Check if profile exists
+        const { data, error } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', firebaseUser.uid)
+          .single();
+
+        if (error && error.code !== 'PGRST116') {
+          console.error('Supabase fetch error:', error);
+        }
+
+        if (!data) {
+          // 2️⃣ Create profile if it doesn't exist
+          const { data: inserted, error: insertError } = await supabase
+            .from('users')
+            .insert({
+              id: firebaseUser.uid,
+              name: firebaseUser.displayName || '',
+              email: firebaseUser.email || '',
+              avatar_url: firebaseUser.photoURL || '',
+              bio: ''
+            })
+            .select()
+            .single();
+
+          if (insertError) console.error('Error inserting new user:', insertError);
+
+          setProfileData(inserted);
+        } else {
+          setProfileData(data);
+        }
+      } catch (err) {
+        console.error('Profile loading error:', err);
+      } finally {
+        setProfileLoading(false);
       }
-    });
+    } else {
+      setProfileData(null);
+    }
+  });
+
+  return () => unsubscribe();
+}, []);
+
+
+  // DB connection check
+  useEffect(() => {
+    testDatabaseConnection().then(result => setDbStatus({ connected: result.connected, error: result.error }));
   }, []);
 
-  useEffect(() => {
-    if (view === 'explore') {
-      loadJourneys();
-    }
-  }, [view]);
+  // -------------------------
+  // Load profile immediately
+  const loadProfile = async () => {
+  if (!user) return;
 
+  setProfileLoading(true);
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', user.uid)
+      .single();
+
+    if (error && error.code !== 'PGRST116') {
+      // PGRST116 = no rows found, ignore
+      console.error('Supabase fetch error:', error);
+      alert('Failed to fetch profile from Supabase.');
+      setProfileData(null);
+      return;
+    }
+
+    if (!data) {
+      // If user not in DB, insert
+      const { data: inserted, error: insertError } = await supabase
+        .from('users')
+        .insert({
+          id: user.uid,
+          name: user.displayName || '',
+          email: user.email || '',
+          avatar_url: user.photoURL || '',
+          bio: ''
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error('Error inserting new user:', insertError);
+        alert('Failed to create your profile. Try again.');
+        setProfileData(null);
+      } else {
+        setProfileData(inserted);
+      }
+    } else {
+      setProfileData(data);
+    }
+  } catch (err) {
+    console.error('Unexpected error loading profile:', err);
+    alert('An unexpected error occurred while loading your profile.');
+    setProfileData(null);
+  } finally {
+    setProfileLoading(false);
+  }
+};
+
+
+  // -------------------------
+  // Load journeys immediately
   const loadJourneys = async () => {
+    if (!user) return;
     setLoading(true);
     try {
-      let query = supabase
-        .from('journeys')
-        .select('*')
-        .eq('visibility', 'public')
-        .order('created_at', { ascending: false })
-        .limit(20);
-
-      if (filterType !== 'all') {
-        query = query.eq('journey_type', filterType);
-      }
+      let query = supabase.from('journeys').select('*').eq('visibility', 'public').order('created_at', { ascending: false }).limit(20);
+      if (filterType !== 'all') query = query.eq('journey_type', filterType);
 
       const { data, error } = await query;
-
       if (error) throw error;
       if (data) setJourneys(data as Journey[]);
     } catch (error) {
@@ -79,6 +172,25 @@ function App() {
     }
   };
 
+  // -------------------------
+  // Google login
+  const handleGoogleLogin = async () => {
+    try { await signInWithPopup(auth, googleProvider); } 
+    catch (error) { console.error('Google login failed:', error); }
+  };
+
+  // Logout
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setView('hero');
+      setUser(null);
+      setProfileData(null);
+    } catch (error) { console.error('Logout failed:', error); }
+  };
+
+  // -------------------------
+  // Create journey
   const handleJourneyComplete = async (data: {
     title: string;
     legs: JourneyLeg[];
@@ -87,15 +199,15 @@ function App() {
     departureDate: string;
     returnDate: string;
   }) => {
+    if (!user) return alert('Please sign in first!');
     setLoading(true);
-
     try {
       const aiStory = generateAIStory(data.legs, data.journeyType, data.keywords);
       const similarityScore = calculateSimilarityScore(data.legs);
       const rarityScore = calculateRarityScore(data.legs, data.journeyType);
       const culturalInsights = getCulturalInsights(data.legs);
 
-      const newJourney = {
+      const newJourney: Journey = {
         title: data.title,
         description: '',
         journey_type: data.journeyType,
@@ -107,53 +219,33 @@ function App() {
         similarity_score: similarityScore,
         rarity_score: rarityScore,
         cultural_insights: culturalInsights,
-        visibility: 'public',
+        visibility: "public",
         likes_count: 0,
         views_count: 0,
-      };
-
-      const tempJourney: Journey = {
-        ...newJourney,
-        visibility: 'public' as Journey['visibility'],
+        user_id: user.uid,
         id: `temp-${Date.now()}`,
-        user_id: 'demo-user',
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       };
 
-      setJourneys([tempJourney, ...journeys]);
+      setJourneys([newJourney, ...journeys]);
       setView('explore');
 
-      const { error } = await supabase
-        .from('journeys')
-        .insert([{ ...newJourney, user_id: 'demo-user' }]);
-
-      if (error) {
-        console.error('Error saving journey:', error);
-      } else {
-        loadJourneys();
-      }
-    } catch (error) {
-      console.error('Error creating journey:', error);
-    } finally {
-      setLoading(false);
-    }
+      const { error } = await supabase.from('journeys').insert([newJourney]);
+      if (error) console.error('Error saving journey:', error);
+      else loadJourneys();
+    } catch (error) { console.error('Error creating journey:', error); }
+    finally { setLoading(false); }
   };
 
-  const handleLike = async (journeyId: string) => {
-    const journey = journeys.find(j => j.id === journeyId);
-    if (!journey) return;
-
-    const updatedJourneys = journeys.map(j =>
-      j.id === journeyId
-        ? { ...j, likes_count: j.likes_count + 1 }
-        : j
-    );
-    setJourneys(updatedJourneys);
+  // -------------------------
+  const handleLike = (journeyId: string) => {
+    setJourneys(prev => prev.map(j => j.id === journeyId ? { ...j, likes_count: j.likes_count + 1 } : j));
   };
 
   const filteredJourneys = journeys.filter(journey => {
-    const matchesSearch = journey.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    const matchesSearch =
+      journey.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       journey.legs.some(leg =>
         leg.fromCity.toLowerCase().includes(searchQuery.toLowerCase()) ||
         leg.toCity.toLowerCase().includes(searchQuery.toLowerCase())
@@ -161,8 +253,29 @@ function App() {
     return matchesSearch;
   });
 
+  // -------------------------
+  // If not logged in
+  if (!user) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen gap-6 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+        <h1 className="text-4xl font-bold text-white">Welcome to Memory of Journeys</h1>
+        <p className="text-gray-400 text-center max-w-md">
+          Sign in with Google to start creating and exploring journeys.
+        </p>
+        <button
+          onClick={handleGoogleLogin}
+          className="px-6 py-3 bg-blue-500 text-white font-semibold rounded-lg hover:bg-blue-600 transition-all"
+        >
+          Sign in with Google
+        </button>
+      </div>
+    );
+  }
+
+  // -------------------------
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+      {/* Navbar */}
       <nav className="fixed top-0 left-0 right-0 z-50 bg-slate-900/80 backdrop-blur-xl border-b border-slate-800">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => setView('hero')}>
@@ -171,62 +284,67 @@ function App() {
             </div>
             <div>
               <h1 className="text-xl font-bold text-white">Memory of Journeys</h1>
-              <div className="flex items-center gap-2">
-                <p className="text-xs text-gray-400">Powered by Supabase</p>
-                {dbStatus.connected ? (
-                  <span className="inline-flex items-center gap-1 text-xs text-green-400">
-                    <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
-                    Connected
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 text-xs text-yellow-400" title={dbStatus.error}>
-                    <span className="w-2 h-2 bg-yellow-400 rounded-full"></span>
-                    Demo Mode
-                  </span>
-                )}
-              </div>
+              <p className="text-xs text-gray-400">Powered by Supabase</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              {user.photoURL ? (
+                <img src={user.photoURL} alt="user" className="w-8 h-8 rounded-full border border-gray-600" />
+              ) : <UserIcon className="w-8 h-8 text-white" />}
+              <span className="text-sm text-gray-300 font-medium">{user.displayName}</span>
+              <button
+                onClick={async () => { setView('profile'); await loadProfile(); }}
+                className="px-3 py-1 bg-blue-500 text-white rounded-md hover:bg-blue-600 flex items-center gap-1 text-sm"
+              >
+                Profile
+              </button>
+              <button onClick={handleLogout} className="px-3 py-1 bg-red-500 text-white rounded-md hover:bg-red-600 flex items-center gap-1 text-sm">
+                <LogOut className="w-4 h-4" /> Logout
+              </button>
+            </div>
+
             <button
-              onClick={() => setView('explore')}
-              className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                view === 'explore'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-gray-300 hover:bg-slate-800'
-              }`}
+              onClick={async () => { setView('explore'); await loadJourneys(); }}
+              className={`px-4 py-2 rounded-lg font-medium transition-all ${view === 'explore' ? 'bg-blue-500 text-white' : 'text-gray-300 hover:bg-slate-800'}`}
             >
-              <Search className="inline w-4 h-4 mr-2" />
-              Explore
+              <Search className="inline w-4 h-4 mr-2" /> Explore
             </button>
-            <button
-              onClick={() => setView('features')}
-              className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                view === 'features'
-                  ? 'bg-purple-500 text-white'
-                  : 'text-gray-300 hover:bg-slate-800'
-              }`}
-            >
-              <TrendingUp className="inline w-4 h-4 mr-2" />
-              AI Features
+            <button onClick={() => setView('features')} className={`px-4 py-2 rounded-lg font-medium transition-all ${view === 'features' ? 'bg-purple-500 text-white' : 'text-gray-300 hover:bg-slate-800'}`}>
+              <TrendingUp className="inline w-4 h-4 mr-2" /> AI Features
             </button>
-            <button
-              onClick={() => setView('create')}
-              className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                view === 'create'
-                  ? 'bg-cyan-500 text-white'
-                  : 'text-gray-300 hover:bg-slate-800'
-              }`}
-            >
-              <Plus className="inline w-4 h-4 mr-2" />
-              Create
+            <button onClick={() => setView('create')} className={`px-4 py-2 rounded-lg font-medium transition-all ${view === 'create' ? 'bg-cyan-500 text-white' : 'text-gray-300 hover:bg-slate-800'}`}>
+              <Plus className="inline w-4 h-4 mr-2" /> Create
             </button>
           </div>
         </div>
       </nav>
 
       <div className="pt-20">
+     {view === 'profile' && (
+  <div className="max-w-4xl mx-auto px-6 py-12">
+    {profileLoading ? (
+      <div className="text-center py-20 text-white">
+        <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
+        <p className="text-gray-400 mt-4">Loading profile...</p>
+      </div>
+    ) : profileData ? (
+      <Profile
+        firebaseUser={user!}
+        profileData={profileData}
+        onProfileUpdate={setProfileData}
+      />
+    ) : (
+      <div className="text-center py-20 text-white">
+        Failed to load profile.
+      </div>
+    )}
+  </div>
+)}
+
+
+
         {view === 'hero' && (
           <div>
             <HeroSection onGetStarted={() => setView('create')} />
