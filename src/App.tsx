@@ -12,6 +12,10 @@ import MemoryMuseum from './components/MemoryMuseum';
 import ThenAndNow from './components/ThenAndNow';
 import WeatherMemory from './components/WeatherMemory';
 import BonusFeatures from './components/BonusFeatures';
+import PostcardGenerator from './components/PostcardGenerator';
+import VoiceJournaling from './components/VoiceJournaling';
+import InteractiveGallery from './components/InteractiveGallery';
+import MemoryTemperature from './components/MemoryTemperature';
 import { supabase, Journey, JourneyLeg } from './lib/supabase';
 import { getTravelDNA } from './utils/travelDNA';
 import { analyzeTextMood } from './utils/sentimentClient';
@@ -25,9 +29,11 @@ import {
 } from './utils/aiStoryGenerator';
 
 type View = 'hero' | 'create' | 'explore' | 'features';
+type BonusFeatureView = 'overview' | 'postcards' | 'temperature' | 'voice' | 'gallery';
 
 function App() {
   const [view, setView] = useState<View>('hero');
+  const [bonusFeatureView, setBonusFeatureView] = useState<BonusFeatureView>('overview');
   const [journeys, setJourneys] = useState<Journey[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -466,7 +472,65 @@ function App() {
               )}
 
               {/* Bonus Features */}
-              <BonusFeatures />
+              {bonusFeatureView === 'overview' && (
+                <BonusFeatures onFeatureClick={(featureId) => {
+                  setBonusFeatureView(featureId as BonusFeatureView);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }} />
+              )}
+
+              {bonusFeatureView === 'postcards' && (
+                <div className="space-y-4">
+                  <button
+                    onClick={() => setBonusFeatureView('overview')}
+                    className="text-slate-400 hover:text-white transition-colors"
+                  >
+                    ← Back to Bonus Features
+                  </button>
+                  <PostcardGenerator journeys={journeys} />
+                </div>
+              )}
+
+              {bonusFeatureView === 'temperature' && (
+                <div className="space-y-4">
+                  <button
+                    onClick={() => setBonusFeatureView('overview')}
+                    className="text-slate-400 hover:text-white transition-colors"
+                  >
+                    ← Back to Bonus Features
+                  </button>
+                  <MemoryTemperature journeys={journeys} />
+                </div>
+              )}
+
+              {bonusFeatureView === 'voice' && (
+                <div className="space-y-4">
+                  <button
+                    onClick={() => setBonusFeatureView('overview')}
+                    className="text-slate-400 hover:text-white transition-colors"
+                  >
+                    ← Back to Bonus Features
+                  </button>
+                  <VoiceJournaling onSave={(transcript) => {
+                    console.log('Voice transcript saved:', transcript);
+                    // You can add logic here to save the transcript to a journey
+                    alert('Voice transcript saved! You can now add this to a journey.');
+                    setBonusFeatureView('overview');
+                  }} />
+                </div>
+              )}
+
+              {bonusFeatureView === 'gallery' && (
+                <div className="space-y-4">
+                  <button
+                    onClick={() => setBonusFeatureView('overview')}
+                    className="text-slate-400 hover:text-white transition-colors"
+                  >
+                    ← Back to Bonus Features
+                  </button>
+                  <InteractiveGallery journeys={journeys} />
+                </div>
+              )}
 
               {/* Call to action */}
               {journeys.length === 0 && (

@@ -1,43 +1,59 @@
 // Bonus Features Collection
-import { Mail, Thermometer, Users, Mic, Image, FileText } from 'lucide-react';
+import { Mail, Thermometer, Users, Mic, Image, FileText, ArrowRight } from 'lucide-react';
 
-export default function BonusFeatures() {
+interface BonusFeaturesProps {
+  onFeatureClick: (featureId: string) => void;
+}
+
+export default function BonusFeatures({ onFeatureClick }: BonusFeaturesProps) {
   const features = [
     {
+      id: 'postcards',
       icon: <FileText className="w-8 h-8" />,
       title: 'AI-Generated Postcards',
       description: 'Create beautiful printable postcards with your photos, captions, and AI-written messages',
-      color: 'from-blue-500 to-cyan-500'
+      color: 'from-blue-500 to-cyan-500',
+      available: true
     },
     {
+      id: 'temperature',
       icon: <Thermometer className="w-8 h-8" />,
       title: 'Memory Temperature',
       description: 'Visualize "warm" vs "cold" memories by analyzing emotion and weather patterns',
-      color: 'from-orange-500 to-red-500'
+      color: 'from-orange-500 to-red-500',
+      available: true
     },
     {
-      icon: <Users className="w-8 h-8" />,
-      title: 'Friend Memory Sync',
-      description: 'Combine journeys with friends and let AI highlight shared moments and experiences',
-      color: 'from-purple-500 to-pink-500'
-    },
-    {
+      id: 'voice',
       icon: <Mic className="w-8 h-8" />,
       title: 'Voice Journaling',
       description: 'Record your travel stories instead of typing - AI converts speech to beautifully formatted text',
-      color: 'from-green-500 to-emerald-500'
+      color: 'from-green-500 to-emerald-500',
+      available: true
     },
     {
+      id: 'gallery',
       icon: <Image className="w-8 h-8" />,
       title: 'Interactive Gallery Wall',
       description: 'Shuffle and arrange your travel photos like real polaroids on a digital corkboard',
-      color: 'from-yellow-500 to-amber-500'
+      color: 'from-yellow-500 to-amber-500',
+      available: true
     },
     {
+      id: 'friends',
+      icon: <Users className="w-8 h-8" />,
+      title: 'Friend Memory Sync',
+      description: 'Combine journeys with friends and let AI highlight shared moments and experiences',
+      color: 'from-purple-500 to-pink-500',
+      available: false
+    },
+    {
+      id: 'whispers',
       icon: <Mail className="w-8 h-8" />,
       title: 'Memory Whispers',
       description: 'Receive weekly AI-generated letters from your past travel memories',
-      color: 'from-indigo-500 to-violet-500'
+      color: 'from-indigo-500 to-violet-500',
+      available: false
     }
   ];
 
@@ -49,10 +65,13 @@ export default function BonusFeatures() {
       </div>
 
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {features.map((feature, index) => (
+        {features.map((feature) => (
           <div
-            key={index}
-            className="group bg-white/5 rounded-xl p-6 border border-white/10 hover:border-white/30 transition-all hover:scale-105"
+            key={feature.id}
+            onClick={() => feature.available && onFeatureClick(feature.id)}
+            className={`group bg-white/5 rounded-xl p-6 border border-white/10 hover:border-white/30 transition-all ${
+              feature.available ? 'hover:scale-105 cursor-pointer' : 'opacity-60'
+            }`}
           >
             <div className={`inline-flex p-3 rounded-lg bg-gradient-to-br ${feature.color} mb-4`}>
               {feature.icon}
@@ -61,8 +80,14 @@ export default function BonusFeatures() {
             <h3 className="text-lg font-bold text-white mb-2">{feature.title}</h3>
             <p className="text-sm text-slate-400">{feature.description}</p>
             
-            <div className="mt-4 opacity-0 group-hover:opacity-100 transition-opacity">
-              <span className="text-xs text-slate-500">Coming soon...</span>
+            <div className="mt-4">
+              {feature.available ? (
+                <span className="inline-flex items-center gap-1 text-xs text-green-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                  Click to open <ArrowRight className="w-3 h-3" />
+                </span>
+              ) : (
+                <span className="text-xs text-slate-500">Coming soon...</span>
+              )}
             </div>
           </div>
         ))}
@@ -72,9 +97,9 @@ export default function BonusFeatures() {
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-xl font-bold text-white mb-1">Quick Win Ideas</h3>
-            <p className="text-sm text-slate-300">Easy to implement, high impact features</p>
+            <p className="text-sm text-slate-300">Easy to implement, high impact features - 4 now available! ✨</p>
           </div>
-          <div className="text-4xl">✨</div>
+          <div className="text-4xl">🎉</div>
         </div>
       </div>
     </div>
