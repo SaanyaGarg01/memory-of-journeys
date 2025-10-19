@@ -25,11 +25,15 @@ const Profile: React.FC<ProfileProps> = ({ firebaseUser, profileData, onProfileU
   const [editingJourneyId, setEditingJourneyId] = useState<string | null>(null);
   const [journeyForm, setJourneyForm] = useState<JourneyFormType>({ legs: [] });
 
-  // Load user's journeys when logged in
+  // Load user journeys on mount
   useEffect(() => {
-    if (firebaseUser) loadUserJourneys();
+    if (firebaseUser) {
+      loadUserJourneys();
+      loadProfile();
+    }
   }, [firebaseUser]);
 
+  // Fetch journeys for this user
   const loadUserJourneys = async () => {
     setJourneysLoading(true);
     try {
@@ -48,41 +52,109 @@ const Profile: React.FC<ProfileProps> = ({ firebaseUser, profileData, onProfileU
     }
   };
 
-  // Update form data for profile editing
+  // Fetch profile from Supabase
+  const loadProfile = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('firebase_uid', firebaseUser.uid)
+        .single();
+
+      if (!error && data) {
+        onProfileUpdate(data);
+        setFormData({
+          name: data.name,
+          email: data.email,
+          avatar_url: data.avatar_url,
+          bio: data.bio,
+        });
+      }
+    } catch (err) {
+      console.error('Error loading profile:', err);
+    }
+  };
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
-  // Save or create user profile in Supabase
+  // Save profile (insert or update)
   const handleSaveProfile = async () => {
     setLoadingProfile(true);
     try {
-      const { data, error } = await supabase
+      // Check if profile exists
+      const { data: existingProfile, error: selectError } = await supabase
         .from('users')
-        .upsert({
-          firebase_uid: firebaseUser.uid,
-          name: formData.name,
-          email: formData.email,
-          avatar_url: formData.avatar_url,
-          bio: formData.bio,
-        })
-        .select()
+        .select('*')
+        .eq('firebase_uid', firebaseUser.uid)
         .single();
 
-      if (error) throw error;
+      let updatedProfile;
+      if (existingProfile) {
+        // Update existing
+        const { data, error } = await supabase
+          .from('users')
+          .update({
+            name: formData.name,
+            email: formData.email,
+            avatar_url: formData.avatar_url,
+            bio: formData.bio,
+          })
+          .eq('firebase_uid', firebaseUser.uid)
+          .select()
+          .single();
 
-      onProfileUpdate(data);
+        if (error) throw error;
+        updatedProfile = data;
+      } else {
+        // Insert new
+        const { data, error } = await supabase
+          .from('users')
+          .insert({
+            firebase_uid: firebaseUser.uid,
+            name: formData.name,
+            email: formData.email,
+            avatar_url: formData.avatar_url,
+            bio: formData.bio,
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+        updatedProfile = data;
+      }
+
+      // Fetch latest profile to ensure updates persist
+      if (updatedProfile) {
+        const { data: freshProfile } = await supabase
+          .from('users')
+          .select('*')
+          .eq('firebase_uid', firebaseUser.uid)
+          .single();
+
+        if (freshProfile) {
+          onProfileUpdate(freshProfile);
+          setFormData({
+            name: freshProfile.name,
+            email: freshProfile.email,
+            avatar_url: freshProfile.avatar_url,
+            bio: freshProfile.bio,
+          });
+        }
+      }
+
       setEditingProfile(false);
-      alert('✅ Profile updated successfully!');
+      alert('✅ Profile saved successfully!');
     } catch (err) {
-      console.error(err);
-      alert('❌ Failed to update profile');
+      console.error('Failed to save profile:', err);
+      alert('❌ Failed to save profile');
     } finally {
       setLoadingProfile(false);
     }
   };
 
-  // Journey form handling
+  // Journey form handlers
   const handleJourneyFormChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setJourneyForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
   };
@@ -117,7 +189,7 @@ const Profile: React.FC<ProfileProps> = ({ firebaseUser, profileData, onProfileU
     });
   };
 
-  // Save journey (insert or update)
+  // Save journey
   const handleSaveJourney = async () => {
     try {
       const journeyData = {
