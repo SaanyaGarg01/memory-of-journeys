@@ -4,6 +4,7 @@ import { JourneyLeg } from '../lib/supabase';
 import { sampleAirports } from '../data/sampleAirports';
 import { analyzeTextMood } from '../utils/sentimentClient';
 import { fetchHistoricalWeather } from '../utils/weatherHistory';
+import JourneyMap from './JourneyMap';
 import { getTravelDNA } from '../utils/travelDNA';
 
 interface JourneyBuilderProps {
@@ -258,8 +259,14 @@ export default function JourneyBuilder({ onJourneyComplete }: JourneyBuilderProp
 
       {/* Results Section */}
       {(moodInsights || weatherHistory.length > 0 || travelDNA) && (
-        <div className="bg-slate-800/40 border border-slate-700 rounded-xl p-6 mt-6 space-y-4">
-          <h2 className="text-xl font-semibold text-white mb-2">✨ Journey Insights</h2>
+        <div className="bg-slate-800/40 border border-slate-700 rounded-xl p-6 mt-6 space-y-6">
+          <h2 className="text-xl font-semibold text-white mb-4">✨ Journey Insights</h2>
+
+          {/* Journey Map */}
+          <JourneyMap 
+            journeyLegs={legs.filter(leg => leg.from && leg.to)} 
+            title={title || 'Your Journey'}
+          />
 
           {moodInsights && (
             <div>

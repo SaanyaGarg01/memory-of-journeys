@@ -57,34 +57,34 @@ function App(): JSX.Element {
   const [profileLoading, setProfileLoading] = useState(false);
 
   // Theme state
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    try {
-      const saved = localStorage.getItem('theme');
-      return (saved as 'dark' | 'light') || 'dark';
-    } catch {
-      return 'dark';
-    }
-  });
+const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+  try {
+    const saved = localStorage.getItem('theme');
+    return (saved as 'dark' | 'light') || 'dark';
+  } catch {
+    return 'dark';
+  }
+});
 
   const toggleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
 
-  useEffect(() => {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
+useEffect(() => {
+  if (theme === 'dark') {
+    document.documentElement.classList.add('dark');
       document.body.style.backgroundColor = '#0f172a';
       document.body.style.color = '#ffffff';
-    } else {
-      document.documentElement.classList.remove('dark');
+  } else {
+    document.documentElement.classList.remove('dark');
       document.body.style.backgroundColor = '#f9fafb';
       document.body.style.color = '#000000';
-    }
+  }
 
-    try {
-      localStorage.setItem('theme', theme);
-    } catch {
-      // ignore
-    }
-  }, [theme]);
+  try {
+    localStorage.setItem('theme', theme);
+  } catch {
+    // ignore
+  }
+}, [theme]);
 
   // Listen to Firebase auth changes
   useEffect(() => {
@@ -143,7 +143,7 @@ function App(): JSX.Element {
 
 
   // Load profile manually (exposed by navbar)
-  const loadProfile = async () => {eates a
+  const loadProfile = async () => {
     if (!user) return;
 
     setProfileLoading(true);
@@ -869,4 +869,3 @@ function App(): JSX.Element {
 }
 
 export default App;
-  

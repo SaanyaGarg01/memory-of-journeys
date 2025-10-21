@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { Journey } from '../lib/supabase';
 import Globe3D from './Globe3D';
+import JourneyMap from './JourneyMap';
 
 // 🧠 AI + Weather utils
 import { analyzeTextMood } from '../utils/sentimentClient';
@@ -255,6 +256,15 @@ export default function JourneyCard({ journey, onLike, isLiked }: JourneyCardPro
             </h4>
             <p className="text-sm text-gray-300 leading-relaxed">{travelDNA}</p>
           </div>
+        )}
+
+        {/* Journey Map */}
+        {journey.legs && journey.legs.length > 0 && (
+          <JourneyMap 
+            journeyLegs={journey.legs} 
+            title={journey.title}
+            className="mt-4"
+          />
         )}
 
         {/* Keywords */}
