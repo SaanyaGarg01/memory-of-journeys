@@ -22,6 +22,7 @@ import InteractiveGallery from './components/InteractiveGallery';
 import MemoryTemperature from './components/MemoryTemperature';
 import FriendMemorySync from './components/FriendMemorySync';
 import MemoryWhispers from './components/MemoryWhispers';
+import HomeButton from './components/HomeButton';
 
 import { supabase, Journey, JourneyLeg } from './lib/supabase';
 import { getTravelDNA } from './utils/travelDNA';
@@ -841,6 +842,9 @@ useEffect(() => {
           </div>
         )}
       </div>
+
+      {/* Floating Home Button visible on all logged-in views */}
+      <HomeButton onClick={() => setView('hero')} />
 
       <footer className="bg-slate-950 border-t border-slate-800 mt-20">
         <div className="max-w-7xl mx-auto px-6 py-12">

@@ -6,6 +6,7 @@ import {
 import { Journey } from '../lib/supabase';
 import Globe3D from './Globe3D';
 import JourneyMap from './JourneyMap';
+import InteractiveCityMap from './InteractiveCityMap';
 
 // 🧠 AI + Weather utils
 import { analyzeTextMood } from '../utils/sentimentClient';
@@ -114,27 +115,32 @@ export default function JourneyCard({ journey, onLike, isLiked }: JourneyCardPro
     return icons[type] || '✈️';
   };
 
-  const handleShare = async () => {
-    const shareData = {
-      title: journey.title || 'My Journey',
-      text: journey.ai_story
-        ? `${journey.ai_story.slice(0, 100)}...`
-        : `Explore my travel journey: ${journey.title}`,
-      url: window.location.href,
-    };
+  const [showShare, setShowShare] = useState(false);
 
-    if (navigator.share) {
-      try {
-        await navigator.share(shareData);
-      } catch (err) {
-        console.error('Share canceled or failed:', err);
+  const handleShare = async () => {
+    const route = (journey.legs || [])
+      .map((l) => `${l.fromCity} → ${l.toCity}`)
+      .join(' | ');
+    const storySnippet = journey.ai_story ? `${journey.ai_story.slice(0, 140)}...` : '';
+    const url = window.location.href;
+    const title = journey.title || 'My Journey';
+    const text = storySnippet || `Explore my travel journey: ${title}`;
+    const body = `${title}\n${text}\nRoute: ${route}\n${url}`.trim();
+
+    // Try native share first
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, text: `${text}\nRoute: ${route}`, url });
+        return;
       }
-    } else {
+      throw new Error('Web Share API not available');
+    } catch (err) {
+      // Fallback to clipboard
       try {
-        await navigator.clipboard.writeText(`${shareData.title}\n${shareData.text}\n${shareData.url}`);
-        alert('Journey link copied to clipboard!');
+        await navigator.clipboard.writeText(body);
+        alert('Journey details copied to clipboard!');
       } catch {
-        alert('Could not copy link, please copy manually.');
+        alert(body);
       }
     }
   };
@@ -267,6 +273,14 @@ export default function JourneyCard({ journey, onLike, isLiked }: JourneyCardPro
           />
         )}
 
+        {/* Interactive City Map */}
+        {journey.legs && journey.legs.length > 0 && (
+          <InteractiveCityMap
+            journeyLegs={journey.legs}
+            className="mt-4"
+          />
+        )}
+
         {/* Keywords */}
         {journey.keywords && journey.keywords.length > 0 && (
           <div className="flex flex-wrap gap-2">
@@ -297,13 +311,56 @@ export default function JourneyCard({ journey, onLike, isLiked }: JourneyCardPro
         )}
 
         {/* 📤 Share Journey */}
-        <button
-          onClick={handleShare}
-          className="w-full py-3 bg-slate-700/50 hover:bg-slate-700 text-white rounded-lg transition-colors flex items-center justify-center gap-2 border border-slate-600"
-        >
-          <Share2 className="w-4 h-4" />
-          Share Journey
-        </button>
+        <div className="space-y-3">
+          <button
+            onClick={() => setShowShare((v) => !v)}
+            className="w-full py-3 bg-slate-700/50 hover:bg-slate-700 text-white rounded-lg transition-colors flex items-center justify-center gap-2 border border-slate-600"
+          >
+            <Share2 className="w-4 h-4" />
+            Share Journey
+          </button>
+          {showShare && (() => {
+            const route = (journey.legs || [])
+              .map((l) => `${l.fromCity} → ${l.toCity}`)
+              .join(' | ');
+            const storySnippet = journey.ai_story ? `${journey.ai_story.slice(0, 140)}...` : '';
+            const url = window.location.href;
+            const title = journey.title || 'My Journey';
+            const text = storySnippet || `Explore my travel journey: ${title}`;
+            const body = `${title}\n${text}\nRoute: ${route}\n${url}`.trim();
+            const enc = encodeURIComponent;
+            const wa = `https://wa.me/?text=${enc(body)}`;
+            const mail = `mailto:?subject=${enc(title)}&body=${enc(body)}`;
+            const tg = `https://t.me/share/url?url=${enc(url)}&text=${enc(`${text}\nRoute: ${route}`)}`;
+            const tw = `https://twitter.com/intent/tweet?text=${enc(text)}&url=${enc(url)}`;
+            const fb = `https://www.facebook.com/sharer/sharer.php?u=${enc(url)}`;
+            const onInsta = async () => {
+              try {
+                await navigator.clipboard.writeText(body);
+                alert('Copied share text. Paste it into Instagram DM or story.');
+              } catch {
+                alert(body);
+              }
+              window.open('https://www.instagram.com/', '_blank');
+            };
+            return (
+              <div className="bg-slate-800/70 border border-slate-700 rounded-lg p-3">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
+                  <a className="px-3 py-2 rounded bg-green-600/20 hover:bg-green-600/30 border border-green-600/30 text-green-300 text-center" href={wa} target="_blank" rel="noreferrer">WhatsApp</a>
+                  <a className="px-3 py-2 rounded bg-blue-600/20 hover:bg-blue-600/30 border border-blue-600/30 text-blue-300 text-center" href={mail}>Email</a>
+                  <a className="px-3 py-2 rounded bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-600/30 text-cyan-300 text-center" href={tg} target="_blank" rel="noreferrer">Telegram</a>
+                  <a className="px-3 py-2 rounded bg-sky-600/20 hover:bg-sky-600/30 border border-sky-600/30 text-sky-300 text-center" href={tw} target="_blank" rel="noreferrer">X / Twitter</a>
+                  <a className="px-3 py-2 rounded bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-600/30 text-indigo-300 text-center" href={fb} target="_blank" rel="noreferrer">Facebook</a>
+                  <button className="px-3 py-2 rounded bg-pink-600/20 hover:bg-pink-600/30 border border-pink-600/30 text-pink-300 text-center" onClick={onInsta}>Instagram</button>
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <button onClick={handleShare} className="flex-1 px-3 py-2 rounded bg-slate-700 hover:bg-slate-600 text-white border border-slate-600">Quick Share</button>
+                  <button onClick={() => setShowShare(false)} className="px-3 py-2 rounded bg-slate-700 hover:bg-slate-600 text-white border border-slate-600">Close</button>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
       </div>
     </div>
   );
