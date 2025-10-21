@@ -1,6 +1,8 @@
+// src/App.tsx
 import { useState, useEffect } from 'react';
+
 // @ts-ignore
-import { Compass, Plus, Search, TrendingUp, LogOut, User as UserIcon } from 'lucide-react';
+import { Compass, Plus, Search, TrendingUp, LogOut, User as UserIcon, Sun, Moon } from 'lucide-react';
 import HeroSection from './components/HeroSection';
 import JourneyBuilder from './components/JourneyBuilder';
 import JourneyCard from './components/JourneyCard';
@@ -20,10 +22,10 @@ import InteractiveGallery from './components/InteractiveGallery';
 import MemoryTemperature from './components/MemoryTemperature';
 import FriendMemorySync from './components/FriendMemorySync';
 import MemoryWhispers from './components/MemoryWhispers';
+
 import { supabase, Journey, JourneyLeg } from './lib/supabase';
 import { getTravelDNA } from './utils/travelDNA';
 import { analyzeTextMood } from './utils/sentimentClient';
-import { testDatabaseConnection } from './dbTest';
 import { auth, googleProvider } from './lib/firebase';
 import { signInWithPopup, onAuthStateChanged, signOut, User } from 'firebase/auth';
 import {
@@ -43,7 +45,6 @@ type ProfileData = {
   avatar_url?: string | null;
   bio?: string | null;
 };
-
 function App(): JSX.Element {
   const [view, setView] = useState<View>('hero');
   const [bonusFeatureView, setBonusFeatureView] = useState<BonusFeatureView>('overview');
@@ -51,10 +52,39 @@ function App(): JSX.Element {
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
-  const [dbStatus, setDbStatus] = useState<{ connected: boolean; error?: string }>({ connected: true });
   const [user, setUser] = useState<User | null>(null);
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
+
+  // Theme state
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    try {
+      const saved = localStorage.getItem('theme');
+      return (saved as 'dark' | 'light') || 'dark';
+    } catch {
+      return 'dark';
+    }
+  });
+
+  const toggleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+      document.body.style.backgroundColor = '#0f172a';
+      document.body.style.color = '#ffffff';
+    } else {
+      document.documentElement.classList.remove('dark');
+      document.body.style.backgroundColor = '#f9fafb';
+      document.body.style.color = '#000000';
+    }
+
+    try {
+      localStorage.setItem('theme', theme);
+    } catch {
+      // ignore
+    }
+  }, [theme]);
 
   // Listen to Firebase auth changes
   useEffect(() => {
@@ -73,6 +103,7 @@ function App(): JSX.Element {
           if (error && error.code !== 'PGRST116') console.error('Supabase fetch error:', error);
 
           if (!data) {
+            // create a profile row if not exists
             const { data: inserted, error: insertError } = await supabase
               .from('users')
               .insert({
@@ -107,14 +138,11 @@ function App(): JSX.Element {
     });
 
     return () => unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // DB connection check
-  useEffect(() => {
-    testDatabaseConnection().then(result => setDbStatus({ connected: result.connected, error: result.error }));
-  }, []);
 
-  // Load profile manually
+  // Load profile manually (exposed by navbar)
   const loadProfile = async () => {
     if (!user) return;
 
@@ -168,9 +196,8 @@ function App(): JSX.Element {
     }
   };
 
-  // Load journeys manually
+  // Load journeys (public explore feed)
   const loadJourneys = async () => {
-    if (!user) return;
     setLoading(true);
     try {
       let query = supabase.from('journeys').select('*').eq('visibility', 'public').order('created_at', { ascending: false }).limit(20);
@@ -202,31 +229,49 @@ function App(): JSX.Element {
     } catch (error) { console.error('Logout failed:', error); }
   };
 
-  // Handle journey completion
-  const handleJourneyComplete = async (data: {
-    title: string;
-    legs: JourneyLeg[];
-    journeyType: Journey['journey_type'];
-    keywords: string[];
-    departureDate: string;
-    returnDate: string;
-  }) => {
-    if (!user) return alert('Please sign in first!');
+  // This handler accepts either a full Journey object (from DB) OR a small payload returned by JourneyBuilder.
+  const handleJourneyComplete = async (payload: any) => {
     setLoading(true);
     try {
-      const aiStory = generateAIStory(data.legs, data.journeyType, data.keywords);
-      const similarityScore = calculateSimilarityScore(data.legs);
-      const rarityScore = calculateRarityScore(data.legs, data.journeyType);
-      const culturalInsights = getCulturalInsights(data.legs);
+      // If payload looks like a saved journey (has id or created_at), use it directly.
+      if (payload && (payload.id || payload.created_at)) {
+        setJourneys(prev => [payload as Journey, ...prev]);
+        setView('explore');
+        return;
+      }
 
-      const newJourney: Journey = {
-        title: data.title,
+      // Otherwise, try to derive full journey and save it
+      const {
+        title,
+        legs,
+        journeyType,
+        keywords,
+        departureDate,
+        returnDate
+      } = payload as {
+        title?: string;
+        legs?: JourneyLeg[];
+        journeyType?: Journey['journey_type'];
+        keywords?: string[];
+        departureDate?: string;
+        returnDate?: string;
+      };
+
+      const aiStory = generateAIStory(legs || [], journeyType || 'solo', keywords || []);
+      const similarityScore = calculateSimilarityScore(legs || []);
+      const rarityScore = calculateRarityScore(legs || [], journeyType || 'solo');
+      const culturalInsights = getCulturalInsights(legs || []);
+
+      const journeyUserId = user?.uid || `anon_${crypto.randomUUID()}`;
+
+      const newJourney: Partial<Journey> = {
+        title: title || 'Untitled Journey',
         description: '',
-        journey_type: data.journeyType,
-        departure_date: data.departureDate,
-        return_date: data.returnDate,
-        legs: data.legs,
-        keywords: data.keywords,
+        journey_type: journeyType || 'solo',
+        departure_date: departureDate || new Date().toISOString().slice(0, 10),
+        return_date: returnDate || departureDate || new Date().toISOString().slice(0, 10),
+        legs: legs || [],
+        keywords: keywords || [],
         ai_story: aiStory,
         similarity_score: similarityScore,
         rarity_score: rarityScore,
@@ -234,24 +279,29 @@ function App(): JSX.Element {
         visibility: "public",
         likes_count: 0,
         views_count: 0,
-        id: '',
-        user_id: user.uid,
+        user_id: journeyUserId,
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
       };
 
-      setJourneys(prev => [newJourney, ...prev]);
+      // Optimistic UI update
+      const optim = { ...(newJourney as Journey), id: '' };
+      setJourneys(prev => [optim, ...prev]);
       setView('explore');
 
+      // Save to Supabase
       const { data: savedJourney, error } = await supabase
         .from('journeys')
         .insert([newJourney])
         .select()
         .single();
 
-      if (error) console.warn('Database save failed:', error);
-      else {
-        setJourneys(prev => prev.map(j => j.id === '' ? savedJourney as Journey : j));
+      if (error) {
+        console.warn('Database save failed:', error);
+        // we keep optimistic but log failure
+      } else if (savedJourney) {
+        // replace optimistic row (id === '') with saved row
+        setJourneys(prev => prev.map(j => (j.id === '' ? savedJourney as Journey : j)));
       }
     } catch (error) {
       console.error('Error creating journey:', error);
@@ -260,28 +310,46 @@ function App(): JSX.Element {
     }
   };
 
-  // Handle likes
+  // Handle likes (local optimistic)
   const handleLike = (journeyId: string) => {
-    setJourneys(prev => prev.map(j => j.id === journeyId ? { ...j, likes_count: j.likes_count + 1 } : j));
+    setJourneys(prev => prev.map(j => j.id === journeyId ? { ...j, likes_count: (j.likes_count || 0) + 1 } : j));
   };
 
   const filteredJourneys = journeys.filter(journey => {
-    const matchesSearch =
-      journey.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      journey.legs.some(leg =>
-        leg.fromCity.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        leg.toCity.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-    return matchesSearch;
+    const q = searchQuery.toLowerCase();
+    if (!q) return true;
+    const matchesTitle = journey.title?.toLowerCase().includes(q);
+    const matchesLegs = (journey.legs || []).some(leg =>
+      (leg.fromCity || '').toLowerCase().includes(q) ||
+      (leg.toCity || '').toLowerCase().includes(q)
+    );
+    return matchesTitle || matchesLegs;
   });
 
-  // -------------------------
   // Not logged in view
   if (!user) {
     return (
-      <div className="flex flex-col items-center justify-center h-screen gap-6 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
-        <h1 className="text-4xl font-bold text-white">Welcome to Memory of Journeys</h1>
-        <p className="text-gray-400 text-center max-w-md">
+      <div className={`flex flex-col items-center justify-center min-h-screen gap-6 ${theme === 'dark' ? 'bg-slate-900' : 'bg-white'}`}>
+        <div className="absolute top-4 right-4">
+          <button
+            onClick={toggleTheme}
+            className={`p-2 rounded-md border transition-all duration-300 ease-in-out transform hover:scale-110 active:scale-95 ${
+              theme === 'dark' 
+                ? 'bg-slate-800/60 hover:bg-slate-700/60 border-slate-700' 
+                : 'bg-gray-200/80 hover:bg-gray-300/80 border-gray-300'
+            }`}
+            aria-label="Toggle theme"
+          >
+            {theme === 'dark' ? (
+              <Sun className="w-5 h-5 text-yellow-400 transition-all duration-300 animate-pulse" />
+            ) : (
+              <Moon className="w-5 h-5 text-gray-700 transition-all duration-300" />
+            )}
+          </button>
+        </div>
+
+        <h1 className={`text-4xl font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>Welcome to Memory of Journeys</h1>
+        <p className={theme === 'dark' ? 'text-gray-300 text-center max-w-md' : 'text-gray-700 text-center max-w-md'}>
           Sign in with Google to start creating and exploring journeys.
         </p>
         <button
@@ -294,19 +362,27 @@ function App(): JSX.Element {
     );
   }
 
-  // -------------------------
+  // Logged-in UI
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+    <div className={`${theme === 'dark' ? 'dark' : ''} min-h-screen bg-gradient-to-br ${theme === 'dark' ? 'from-slate-950 via-slate-900 to-slate-950' : 'from-white via-gray-50 to-white'}`}>
       {/* Navbar */}
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-slate-900/80 backdrop-blur-xl border-b border-slate-800">
+      <nav className={`fixed top-0 left-0 right-0 z-50 backdrop-blur-xl border-b transition-all duration-300 ${
+        theme === 'dark' 
+          ? 'bg-slate-900/80 border-slate-800' 
+          : 'bg-white/80 border-gray-200'
+      }`}>
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => setView('hero')}>
             <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-lg flex items-center justify-center">
               <Compass className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-white">Memory of Journeys</h1>
-              <p className="text-xs text-gray-400">Powered by Supabase</p>
+              <h1 className={`text-xl font-bold transition-colors duration-300 ${
+                theme === 'dark' ? 'text-white' : 'text-gray-900'
+              }`}>Memory of Journeys</h1>
+              <p className={`text-xs transition-colors duration-300 ${
+                theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
+              }`}>Powered by Supabase</p>
             </div>
           </div>
 
@@ -314,14 +390,20 @@ function App(): JSX.Element {
             <div className="flex items-center gap-3">
               {user.photoURL ? (
                 <img src={user.photoURL} alt="user" className="w-8 h-8 rounded-full border border-gray-600" />
-              ) : <UserIcon className="w-8 h-8 text-white" />}
-              <span className="text-sm text-gray-300 font-medium">{user.displayName}</span>
+              ) : <UserIcon className={`w-8 h-8 transition-colors duration-300 ${
+                theme === 'dark' ? 'text-white' : 'text-gray-700'
+              }`} />}
+              <span className={`text-sm font-medium transition-colors duration-300 ${
+                theme === 'dark' ? 'text-gray-300' : 'text-gray-700'
+              }`}>{user.displayName}</span>
+
               <button
                 onClick={async () => { setView('profile'); await loadProfile(); }}
                 className="px-3 py-1 bg-blue-500 text-white rounded-md hover:bg-blue-600 flex items-center gap-1 text-sm"
               >
                 Profile
               </button>
+
               <button onClick={handleLogout} className="px-3 py-1 bg-red-500 text-white rounded-md hover:bg-red-600 flex items-center gap-1 text-sm">
                 <LogOut className="w-4 h-4" /> Logout
               </button>
@@ -329,43 +411,91 @@ function App(): JSX.Element {
 
             <button
               onClick={async () => { setView('explore'); await loadJourneys(); }}
-              className={`px-4 py-2 rounded-lg font-medium transition-all ${view === 'explore' ? 'bg-blue-500 text-white' : 'text-gray-300 hover:bg-slate-800'}`}
+              className={`px-4 py-2 rounded-lg font-medium transition-all duration-300 ${
+                view === 'explore' 
+                  ? 'bg-blue-500 text-white' 
+                  : theme === 'dark' 
+                    ? 'text-gray-300 hover:bg-slate-800' 
+                    : 'text-gray-700 hover:bg-gray-100'
+              }`}
             >
               <Search className="inline w-4 h-4 mr-2" /> Explore
             </button>
-            <button onClick={() => setView('features')} className={`px-4 py-2 rounded-lg font-medium transition-all ${view === 'features' ? 'bg-purple-500 text-white' : 'text-gray-300 hover:bg-slate-800'}`}>
+            <button 
+              onClick={() => setView('features')} 
+              className={`px-4 py-2 rounded-lg font-medium transition-all duration-300 ${
+                view === 'features' 
+                  ? 'bg-purple-500 text-white' 
+                  : theme === 'dark' 
+                    ? 'text-gray-300 hover:bg-slate-800' 
+                    : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
               <TrendingUp className="inline w-4 h-4 mr-2" /> AI Features
             </button>
-            <button onClick={() => setView('create')} className={`px-4 py-2 rounded-lg font-medium transition-all ${view === 'create' ? 'bg-cyan-500 text-white' : 'text-gray-300 hover:bg-slate-800'}`}>
+            <button 
+              onClick={() => setView('create')} 
+              className={`px-4 py-2 rounded-lg font-medium transition-all duration-300 ${
+                view === 'create' 
+                  ? 'bg-cyan-500 text-white' 
+                  : theme === 'dark' 
+                    ? 'text-gray-300 hover:bg-slate-800' 
+                    : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
               <Plus className="inline w-4 h-4 mr-2" /> Create
+            </button>
+
+            {/* Theme toggle */}
+            <button
+              onClick={toggleTheme}
+              className={`p-2 rounded-md transition-all duration-300 ease-in-out transform hover:scale-110 active:scale-95 ${
+                theme === 'dark' 
+                  ? 'bg-slate-800/60 hover:bg-slate-700/60' 
+                  : 'bg-gray-200/80 hover:bg-gray-300/80'
+              }`}
+              aria-label="Toggle theme"
+            >
+              <div className="relative">
+                {theme === 'dark' ? (
+                  <Sun className="w-5 h-5 text-yellow-400 transition-all duration-300 animate-pulse" />
+                ) : (
+                  <Moon className="w-5 h-5 text-gray-700 transition-all duration-300" />
+                )}
+              </div>
             </button>
           </div>
         </div>
       </nav>
 
-<div className="pt-20">
+      <div className="pt-20">
         {view === 'profile' && (
-  <div className="max-w-4xl mx-auto px-6 py-12">
-    {profileLoading ? (
-      <div className="text-center py-20 text-white">
-        <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
-        <p className="text-gray-400 mt-4">Loading profile...</p>
-      </div>
-    ) : (
-      <Profile
-        firebaseUser={user}
-        profileData={{
-          id: profileData?.id || user.uid,
-          name: profileData?.name || user.displayName || '',
-          email: profileData?.email || user.email || '',
-          avatar_url: profileData?.avatar_url || user.photoURL || '',
-          bio: profileData?.bio || ''
-        }}
-        onProfileUpdate={setProfileData}
-      />
-    )}
-  </div>
-)}
+          <div className="max-w-4xl mx-auto px-6 py-12">
+            {profileLoading ? (
+              <div className={`text-center py-20 transition-colors duration-300 ${
+                theme === 'dark' ? 'text-white' : 'text-gray-900'
+              }`}>
+                <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
+                <p className={`mt-4 transition-colors duration-300 ${
+                  theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
+                }`}>Loading profile...</p>
+              </div>
+            ) : (
+              <Profile
+                firebaseUser={user}
+                profileData={{
+                  id: profileData?.id || user.uid,
+                  name: profileData?.name || user.displayName || '',
+                  email: profileData?.email || user.email || '',
+                  avatar_url: profileData?.avatar_url || user.photoURL || '',
+                  bio: profileData?.bio || ''
+                }}
+                onProfileUpdate={setProfileData}
+              />
+            )}
+          </div>
+        )}
+
         {view === 'hero' && (
           <div>
             <HeroSection onGetStarted={() => setView('create')} />
@@ -378,19 +508,29 @@ function App(): JSX.Element {
 
             <div className="max-w-7xl mx-auto px-6 py-20">
               <div className="text-center mb-12">
-                <h2 className="text-4xl font-bold text-white mb-4">
-                  Why Memory of Journeys?
-                </h2>
-                <p className="text-xl text-gray-400 max-w-3xl mx-auto">
+                <h2 className={`text-4xl font-bold mb-4 transition-colors duration-300 ${
+                  theme === 'dark' ? 'text-white' : 'text-gray-900'
+                }`}>Why Memory of Journeys?</h2>
+                <p className={`text-xl max-w-3xl mx-auto transition-colors duration-300 ${
+                  theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
+                }`}>
                   We're not just storing travel data—we're preserving human experiences
                 </p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div className="p-8 bg-gradient-to-br from-slate-900 to-slate-800 rounded-xl border border-slate-700">
+                <div className={`p-8 rounded-xl border transition-all duration-300 ${
+                  theme === 'dark' 
+                    ? 'bg-gradient-to-br from-slate-900 to-slate-800 border-slate-700' 
+                    : 'bg-gradient-to-br from-gray-50 to-gray-100 border-gray-200'
+                }`}>
                   <div className="text-4xl mb-4">🔬</div>
-                  <h3 className="text-2xl font-bold text-white mb-3">The Technology</h3>
-                  <ul className="space-y-2 text-gray-400">
+                  <h3 className={`text-2xl font-bold mb-3 transition-colors duration-300 ${
+                    theme === 'dark' ? 'text-white' : 'text-gray-900'
+                  }`}>The Technology</h3>
+                  <ul className={`space-y-2 transition-colors duration-300 ${
+                    theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
+                  }`}>
                     <li>• MariaDB Vector columns for 384-dim embeddings</li>
                     <li>• IVFFlat indexing for sub-100ms similarity search</li>
                     <li>• ColumnStore for analytics on millions of routes</li>
@@ -399,10 +539,18 @@ function App(): JSX.Element {
                   </ul>
                 </div>
 
-                <div className="p-8 bg-gradient-to-br from-slate-900 to-slate-800 rounded-xl border border-slate-700">
+                <div className={`p-8 rounded-xl border transition-all duration-300 ${
+                  theme === 'dark' 
+                    ? 'bg-gradient-to-br from-slate-900 to-slate-800 border-slate-700' 
+                    : 'bg-gradient-to-br from-gray-50 to-gray-100 border-gray-200'
+                }`}>
                   <div className="text-4xl mb-4">❤️</div>
-                  <h3 className="text-2xl font-bold text-white mb-3">The Human Touch</h3>
-                  <ul className="space-y-2 text-gray-400">
+                  <h3 className={`text-2xl font-bold mb-3 transition-colors duration-300 ${
+                    theme === 'dark' ? 'text-white' : 'text-gray-900'
+                  }`}>The Human Touch</h3>
+                  <ul className={`space-y-2 transition-colors duration-300 ${
+                    theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
+                  }`}>
                     <li>• AI-generated stories blending facts with culture</li>
                     <li>• Cultural insights from 100+ destinations</li>
                     <li>• Rarity scores showing journey uniqueness</li>
@@ -412,16 +560,26 @@ function App(): JSX.Element {
                 </div>
               </div>
 
-              <div className="mt-12 p-8 bg-gradient-to-r from-blue-900/30 to-cyan-900/30 border border-blue-500/30 rounded-2xl text-center">
-                <TrendingUp className="w-12 h-12 text-blue-400 mx-auto mb-4" />
-                <h3 className="text-2xl font-bold text-white mb-3">
-                  Beyond the Hackathon
-                </h3>
-                <p className="text-gray-300 max-w-2xl mx-auto mb-4">
+              <div className={`mt-12 p-8 rounded-2xl text-center border transition-all duration-300 ${
+                theme === 'dark' 
+                  ? 'bg-gradient-to-r from-blue-900/30 to-cyan-900/30 border-blue-500/30' 
+                  : 'bg-gradient-to-r from-blue-50 to-cyan-50 border-blue-200'
+              }`}>
+                <TrendingUp className={`w-12 h-12 mx-auto mb-4 transition-colors duration-300 ${
+                  theme === 'dark' ? 'text-blue-400' : 'text-blue-600'
+                }`} />
+                <h3 className={`text-2xl font-bold mb-3 transition-colors duration-300 ${
+                  theme === 'dark' ? 'text-white' : 'text-gray-900'
+                }`}>Beyond the Hackathon</h3>
+                <p className={`max-w-2xl mx-auto mb-4 transition-colors duration-300 ${
+                  theme === 'dark' ? 'text-gray-300' : 'text-gray-700'
+                }`}>
                   Our vision: A global memory bank where every journey becomes part of humanity's
                   shared travel heritage, powered by MariaDB's innovative vector capabilities
                 </p>
-                <div className="flex flex-wrap justify-center gap-4 text-sm text-gray-400">
+                <div className={`flex flex-wrap justify-center gap-4 text-sm transition-colors duration-300 ${
+                  theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
+                }`}>
                   <span>🌍 Live Travel APIs</span>
                   <span>📱 Mobile App</span>
                   <span>🤝 Tourism Partnerships</span>
@@ -435,25 +593,35 @@ function App(): JSX.Element {
         {view === 'create' && (
           <div className="max-w-4xl mx-auto px-6 py-12">
             <div className="mb-8">
-              <h2 className="text-4xl font-bold text-white mb-2">Create Your Journey</h2>
-              <p className="text-gray-400">
+              <h2 className={`text-4xl font-bold mb-2 transition-colors duration-300 ${
+                theme === 'dark' ? 'text-white' : 'text-gray-900'
+              }`}>Create Your Journey</h2>
+              <p className={`transition-colors duration-300 ${
+                theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
+              }`}>
                 Tell us about your travels and watch AI transform them into a story
               </p>
             </div>
 
-            <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-8 border border-slate-700 shadow-2xl">
+            <div className={`rounded-2xl p-8 border shadow-2xl transition-all duration-300 ${
+              theme === 'dark' 
+                ? 'bg-gradient-to-br from-slate-900 to-slate-800 border-slate-700' 
+                : 'bg-gradient-to-br from-gray-50 to-gray-100 border-gray-200'
+            }`}>
               <JourneyBuilder
-              onJourneyComplete={(data: any) => {
-                // ensure we don't return a Promise where a void is expected and avoid strict type mismatch
-                void handleJourneyComplete(data as any);
-              }}
+                onJourneyComplete={(data: any) => {
+                  // JourneyBuilder may return either a saved journey (DB row) or a small payload.
+                  void handleJourneyComplete(data);
+                }}
               />
             </div>
 
             {loading && (
               <div className="mt-8 text-center">
                 <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
-                <p className="text-gray-400 mt-4">Generating your journey story...</p>
+                <p className={`mt-4 transition-colors duration-300 ${
+                  theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
+                }`}>Generating your journey story...</p>
               </div>
             )}
           </div>
@@ -462,7 +630,9 @@ function App(): JSX.Element {
         {view === 'explore' && (
           <div className="max-w-7xl mx-auto px-6 py-12">
             <div className="mb-8">
-              <h2 className="text-4xl font-bold text-white mb-4">Explore Journeys</h2>
+              <h2 className={`text-4xl font-bold mb-4 transition-colors duration-300 ${
+                theme === 'dark' ? 'text-white' : 'text-gray-900'
+              }`}>Explore Journeys</h2>
 
               <div className="flex flex-col md:flex-row gap-4">
                 <input
@@ -470,7 +640,11 @@ function App(): JSX.Element {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search destinations..."
-                  className="flex-1 px-6 py-3 bg-slate-800/50 border border-slate-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className={`flex-1 px-6 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 ${
+                    theme === 'dark' 
+                      ? 'bg-slate-800/50 border-slate-700 text-white placeholder-gray-500' 
+                      : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-500'
+                  }`}
                 />
 
                 <select
@@ -479,7 +653,11 @@ function App(): JSX.Element {
                     setFilterType(e.target.value);
                     loadJourneys();
                   }}
-                  className="px-6 py-3 bg-slate-800/50 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className={`px-6 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 ${
+                    theme === 'dark' 
+                      ? 'bg-slate-800/50 border-slate-700 text-white' 
+                      : 'bg-gray-50 border-gray-300 text-gray-900'
+                  }`}
                 >
                   <option value="all">All Types</option>
                   <option value="solo">Solo</option>
@@ -529,24 +707,23 @@ function App(): JSX.Element {
               <h2 className="text-5xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent mb-4">
                 AI-Powered Features
               </h2>
-              <p className="text-xl text-slate-400">
-                Experience the future of travel memories with our advanced AI features
-              </p>
+              <p className={`text-xl transition-colors duration-300 ${
+                theme === 'dark' ? 'text-slate-400' : 'text-gray-600'
+              }`}>Experience the future of travel memories with our advanced AI features</p>
             </div>
 
             <div className="space-y-8">
-              {/* Emotional Map - Shows sentiment analysis of journeys */}
               {journeys.length > 0 && (
                 <EmotionalMap
                   emotionalData={journeys.flatMap(journey =>
-                    journey.legs.map((leg: JourneyLeg) => {
+                    (journey.legs || []).map((leg: JourneyLeg) => {
                       const moodResult = analyzeTextMood(
                         `${journey.title} ${journey.ai_story || ''} ${journey.keywords?.join(' ') || ''}`
                       );
                       return {
                         date: journey.departure_date || new Date().toISOString(),
                         location: `${leg.toCity}, ${leg.toCountry}`,
-                        score: moodResult.score / 5, // Normalize to -5 to 5
+                        score: moodResult.score / 5,
                         emotion: moodResult.label
                       };
                     })
@@ -554,14 +731,10 @@ function App(): JSX.Element {
                 />
               )}
 
-              {/* Travel DNA Profile - Personality analysis */}
               {journeys.length > 0 && (
-                <TravelDNAProfile
-                  personality={getTravelDNA(journeys.flatMap(j => j.legs))}
-                />
+                <TravelDNAProfile personality={getTravelDNA(journeys.flatMap(j => j.legs))} />
               )}
 
-              {/* Future Memory Planner - AI destination suggestions */}
               {journeys.length > 0 && (() => {
                 const dna = getTravelDNA(journeys.flatMap(j => j.legs));
                 return (
@@ -576,7 +749,6 @@ function App(): JSX.Element {
                 );
               })()}
 
-              {/* Memory Museum - 3D gallery */}
               <MemoryMuseum
                 journeys={journeys.slice(0, 10).map(journey => ({
                   id: journey.id,
@@ -586,7 +758,6 @@ function App(): JSX.Element {
                 }))}
               />
 
-              {/* Then & Now - Location comparison */}
               {journeys.length > 0 && journeys[0].legs.length > 0 && (
                 <ThenAndNow
                   location={`${journeys[0].legs[0].toCity}, ${journeys[0].legs[0].toCountry}`}
@@ -594,7 +765,6 @@ function App(): JSX.Element {
                 />
               )}
 
-              {/* Weather Memory - Historical weather */}
               {journeys.length > 0 && journeys[0].legs.length > 0 && (
                 <WeatherMemory
                   location={`${journeys[0].legs[0].toCity}, ${journeys[0].legs[0].toCountry}`}
@@ -604,7 +774,6 @@ function App(): JSX.Element {
                 />
               )}
 
-              {/* Bonus Features */}
               {bonusFeatureView === 'overview' && (
                 <BonusFeatures onFeatureClick={(featureId) => {
                   setBonusFeatureView(featureId as BonusFeatureView);
@@ -614,39 +783,23 @@ function App(): JSX.Element {
 
               {bonusFeatureView === 'postcards' && (
                 <div className="space-y-4">
-                  <button
-                    onClick={() => setBonusFeatureView('overview')}
-                    className="text-slate-400 hover:text-white transition-colors"
-                  >
-                    ← Back to Bonus Features
-                  </button>
+                  <button onClick={() => setBonusFeatureView('overview')} className="text-slate-400 hover:text-white transition-colors">← Back to Bonus Features</button>
                   <PostcardGenerator journeys={journeys} />
                 </div>
               )}
 
               {bonusFeatureView === 'temperature' && (
                 <div className="space-y-4">
-                  <button
-                    onClick={() => setBonusFeatureView('overview')}
-                    className="text-slate-400 hover:text-white transition-colors"
-                  >
-                    ← Back to Bonus Features
-                  </button>
+                  <button onClick={() => setBonusFeatureView('overview')} className="text-slate-400 hover:text-white transition-colors">← Back to Bonus Features</button>
                   <MemoryTemperature journeys={journeys} />
                 </div>
               )}
 
               {bonusFeatureView === 'voice' && (
                 <div className="space-y-4">
-                  <button
-                    onClick={() => setBonusFeatureView('overview')}
-                    className="text-slate-400 hover:text-white transition-colors"
-                  >
-                    ← Back to Bonus Features
-                  </button>
+                  <button onClick={() => setBonusFeatureView('overview')} className="text-slate-400 hover:text-white transition-colors">← Back to Bonus Features</button>
                   <VoiceJournaling onSave={(transcript) => {
                     console.log('Voice transcript saved:', transcript);
-                    // You can add logic here to save the transcript to a journey
                     alert('Voice transcript saved! You can now add this to a journey.');
                     setBonusFeatureView('overview');
                   }} />
@@ -655,55 +808,33 @@ function App(): JSX.Element {
 
               {bonusFeatureView === 'gallery' && (
                 <div className="space-y-4">
-                  <button
-                    onClick={() => setBonusFeatureView('overview')}
-                    className="text-slate-400 hover:text-white transition-colors"
-                  >
-                    ← Back to Bonus Features
-                  </button>
+                  <button onClick={() => setBonusFeatureView('overview')} className="text-slate-400 hover:text-white transition-colors">← Back to Bonus Features</button>
                   <InteractiveGallery journeys={journeys} />
                 </div>
               )}
 
               {bonusFeatureView === 'friends' && (
                 <div className="space-y-4">
-                  <button
-                    onClick={() => setBonusFeatureView('overview')}
-                    className="text-slate-400 hover:text-white transition-colors"
-                  >
-                    ← Back to Bonus Features
-                  </button>
+                  <button onClick={() => setBonusFeatureView('overview')} className="text-slate-400 hover:text-white transition-colors">← Back to Bonus Features</button>
                   <FriendMemorySync journeys={journeys} />
                 </div>
               )}
 
               {bonusFeatureView === 'whispers' && (
                 <div className="space-y-4">
-                  <button
-                    onClick={() => setBonusFeatureView('overview')}
-                    className="text-slate-400 hover:text-white transition-colors"
-                  >
-                    ← Back to Bonus Features
-                  </button>
+                  <button onClick={() => setBonusFeatureView('overview')} className="text-slate-400 hover:text-white transition-colors">← Back to Bonus Features</button>
                   <MemoryWhispers journeys={journeys} />
                 </div>
               )}
 
-              {/* Call to action */}
               {journeys.length === 0 && (
                 <div className="text-center py-20 bg-gradient-to-br from-slate-900/50 to-slate-800/50 rounded-2xl border border-slate-700">
                   <div className="text-6xl mb-4">✨</div>
                   <h3 className="text-3xl font-bold text-white mb-4">Create Your First Journey</h3>
                   <p className="text-slate-400 mb-8 max-w-2xl mx-auto">
-                    Start creating journeys to unlock all AI-powered features including emotional analysis,
-                    travel DNA profiling, and personalized destination predictions!
+                    Start creating journeys to unlock all AI-powered features including emotional analysis, travel DNA profiling, and personalized destination predictions!
                   </p>
-                  <button
-                    onClick={() => setView('create')}
-                    className="px-8 py-4 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold rounded-lg hover:from-purple-600 hover:to-pink-600 transition-all transform hover:scale-105"
-                  >
-                    Create Journey Now
-                  </button>
+                  <button onClick={() => setView('create')} className="px-8 py-4 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold rounded-lg hover:from-purple-600 hover:to-pink-600 transition-all transform hover:scale-105">Create Journey Now</button>
                 </div>
               )}
             </div>
@@ -738,3 +869,4 @@ function App(): JSX.Element {
 }
 
 export default App;
+  
