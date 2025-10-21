@@ -1,6 +1,6 @@
 // Interactive Gallery Wall Feature
-import { useState } from 'react';
-import { Image as ImageIcon, Shuffle, Grid } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Image as ImageIcon, Shuffle, Grid, Upload, Replace, Pencil } from 'lucide-react';
 
 interface GalleryItem {
   id: string;
@@ -24,19 +24,43 @@ interface InteractiveGalleryProps {
 export default function InteractiveGallery({ journeys }: InteractiveGalleryProps) {
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
   const [isDragging, setIsDragging] = useState<string | null>(null);
+  const addInputRef = useRef<HTMLInputElement | null>(null);
+  const replaceInputRef = useRef<HTMLInputElement | null>(null);
+  const [replacingId, setReplacingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [tempCaption, setTempCaption] = useState<string>('');
 
   const generateGallery = () => {
     // Generate polaroid-style items from journeys
-    const items: GalleryItem[] = journeys.slice(0, 12).map((journey, index) => ({
-      id: journey.id,
-      url: `https://picsum.photos/seed/${journey.id}/400/300`,
-      caption: journey.title,
-      rotation: Math.random() * 20 - 10, // -10 to 10 degrees
-      position: {
-        x: (index % 4) * 25 + Math.random() * 5,
-        y: Math.floor(index / 4) * 30 + Math.random() * 5
-      }
-    }));
+    const items: GalleryItem[] = journeys.slice(0, 12).map((journey, index) => {
+      let url = `https://picsum.photos/seed/${journey.id}/400/300`;
+      let caption = journey.title;
+      try {
+        const saved = localStorage.getItem(`postcard:${journey.id}`);
+        if (saved) {
+          const parsed = JSON.parse(saved) as { image?: string | null; message?: string; title?: string };
+          if (parsed.image) url = parsed.image;
+          if (parsed.message) caption = parsed.message.slice(0, 60);
+          else if (parsed.title) caption = parsed.title;
+        }
+        const gsave = localStorage.getItem(`gallery:${journey.id}`);
+        if (gsave) {
+          const parsed = JSON.parse(gsave) as { url?: string; caption?: string };
+          if (parsed.url) url = parsed.url;
+          if (parsed.caption) caption = parsed.caption;
+        }
+      } catch {}
+      return {
+        id: journey.id,
+        url,
+        caption,
+        rotation: Math.random() * 20 - 10, // -10 to 10 degrees
+        position: {
+          x: (index % 4) * 25 + Math.random() * 5,
+          y: Math.floor(index / 4) * 30 + Math.random() * 5
+        }
+      } as GalleryItem;
+    });
     setGalleryItems(items);
   };
 
@@ -87,6 +111,107 @@ export default function InteractiveGallery({ journeys }: InteractiveGalleryProps
     setIsDragging(null);
   };
 
+  const startEdit = (id: string, current: string) => {
+    setEditingId(id);
+    setTempCaption(current);
+  };
+  const cancelEdit = () => {
+    setEditingId(null);
+    setTempCaption('');
+  };
+  const saveEdit = () => {
+    if (!editingId) return;
+    setGalleryItems((prev) => prev.map((it) => (it.id === editingId ? { ...it, caption: tempCaption } : it)));
+    setEditingId(null);
+    setTempCaption('');
+  };
+
+  // Build items from user-uploaded files
+  const onAddFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const newItems: GalleryItem[] = [];
+    const promises: Promise<void>[] = [];
+    Array.from(files).slice(0, 24).forEach((file, index) => {
+      if (!file.type.startsWith('image/')) return;
+      promises.push(new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const id = crypto.randomUUID();
+          const caption = file.name.replace(/\.[^/.]+$/, '').slice(0, 40);
+          newItems.push({
+            id,
+            url: String(reader.result || ''),
+            caption: caption || 'My Photo',
+            rotation: Math.random() * 16 - 8,
+            position: {
+              x: (index % 4) * 25 + Math.random() * 8,
+              y: Math.floor(index / 4) * 30 + Math.random() * 8,
+            },
+          });
+          try { localStorage.setItem(`gallery:${id}`, JSON.stringify({ url: String(reader.result || ''), caption })); } catch {}
+          resolve();
+        };
+        reader.readAsDataURL(file);
+      }));
+    });
+    await Promise.all(promises);
+    setGalleryItems((prev) => [...prev, ...newItems].slice(0, 24));
+  };
+
+  // Replace a single item photo
+  const onReplaceFile = async (file: File) => {
+    if (!replacingId || !file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      setGalleryItems((prev) => prev.map((it) => (it.id === replacingId ? { ...it, url: dataUrl } : it)));
+      // Persist back to postcard storage if this id matches a journey-based card
+      try {
+        const saved = localStorage.getItem(`postcard:${replacingId}`);
+        const parsed = saved ? JSON.parse(saved) : {};
+        parsed.image = dataUrl;
+        localStorage.setItem(`postcard:${replacingId}`, JSON.stringify(parsed));
+      } catch {}
+      // Persist to gallery storage as well
+      try { localStorage.setItem(`gallery:${replacingId}`, JSON.stringify({ url: dataUrl })); } catch {}
+      setReplacingId(null);
+      // Reset the file input value so selecting the same file triggers change again
+      if (replaceInputRef.current) replaceInputRef.current.value = '';
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const syncFromPostcards = () => {
+    setGalleryItems((prev) => prev.map((it) => {
+      try {
+        const saved = localStorage.getItem(`postcard:${it.id}`);
+        if (!saved) {
+          // Still try gallery overrides
+          const gsave = localStorage.getItem(`gallery:${it.id}`);
+          if (gsave) {
+            const g = JSON.parse(gsave);
+            return { ...it, url: g.url || it.url, caption: g.caption || it.caption };
+          }
+          return it;
+        }
+        const parsed = JSON.parse(saved) as { image?: string | null; message?: string; title?: string };
+        const gsave = localStorage.getItem(`gallery:${it.id}`);
+        const mergedUrl = gsave ? (JSON.parse(gsave).url || parsed.image || it.url) : (parsed.image || it.url);
+        const mergedCaption = gsave ? (JSON.parse(gsave).caption || (parsed.message ? parsed.message.slice(0, 60) : parsed.title) || it.caption)
+                                    : ((parsed.message ? parsed.message.slice(0, 60) : parsed.title) || it.caption);
+        return {
+          ...it,
+          url: mergedUrl,
+          caption: mergedCaption,
+        };
+      } catch {
+        return it;
+      }
+    }));
+  };
+
+  // Auto-sync disabled per user request
+
   return (
     <div className="bg-slate-900/50 backdrop-blur-sm rounded-2xl p-8 border border-slate-700">
       <div className="flex items-center justify-between mb-6">
@@ -128,6 +253,42 @@ export default function InteractiveGallery({ journeys }: InteractiveGalleryProps
               </button>
             </>
           )}
+          <button
+            onClick={() => setGalleryItems([])}
+            className="flex items-center gap-2 bg-slate-800 text-white px-4 py-2 rounded-lg font-medium hover:bg-slate-700 transition-colors"
+            title="Clear all to replace with your photos"
+          >
+            Clear Wall
+          </button>
+          <button
+            onClick={syncFromPostcards}
+            className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-500 transition-colors"
+            title="Load saved postcard images and text"
+          >
+            Sync Postcards
+          </button>
+          <button
+            onClick={() => addInputRef.current?.click()}
+            className="flex items-center gap-2 bg-gradient-to-r from-pink-500 to-fuchsia-600 text-white px-4 py-2 rounded-lg font-medium hover:opacity-90 transition-all shadow hover:shadow-pink-500/30"
+          >
+            <Upload className="w-5 h-5" />
+            Add Photos
+          </button>
+          <input
+            ref={addInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => onAddFiles(e.currentTarget.files)}
+          />
+          <input
+            ref={replaceInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => onReplaceFile(e.currentTarget.files?.[0] as File)}
+          />
         </div>
       </div>
 
@@ -147,7 +308,7 @@ export default function InteractiveGallery({ journeys }: InteractiveGalleryProps
           {galleryItems.map((item) => (
             <div
               key={item.id}
-              className="absolute cursor-move hover:z-10 transition-shadow hover:shadow-2xl"
+              className="absolute cursor-move hover:z-10 transition-all hover:shadow-2xl hover:scale-[1.02]"
               style={{
                 left: `${item.position.x}%`,
                 top: `${item.position.y}%`,
@@ -159,24 +320,81 @@ export default function InteractiveGallery({ journeys }: InteractiveGalleryProps
               onMouseUp={handleDragEnd}
               onMouseLeave={handleDragEnd}
             >
-              <div className="bg-white p-3 shadow-xl rounded-sm" style={{ width: '200px' }}>
+              <div className="bg-white p-3 shadow-xl rounded-sm ring-1 ring-black/5 group" style={{ width: '220px' }}>
                 {/* Image */}
-                <div className="bg-slate-200 rounded-sm overflow-hidden mb-3" style={{ height: '150px' }}>
+                <div className="relative bg-slate-200 rounded-sm overflow-hidden mb-3" style={{ height: '160px' }} onClick={(ev) => { ev.stopPropagation(); setReplacingId(item.id); replaceInputRef.current?.click(); }}>
                   <img 
                     src={item.url} 
                     alt={item.caption}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                     draggable={false}
                   />
+                  {/* Replace control */}
+                  <button
+                    className="absolute top-2 right-2 bg-black/50 text-white backdrop-blur px-2 py-1 rounded text-xs hover:bg-black/60"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      setReplacingId(item.id);
+                      replaceInputRef.current?.click();
+                    }}
+                    title="Replace photo"
+                  >
+                    <Replace className="w-4 h-4" />
+                  </button>
                 </div>
                 
                 {/* Caption */}
-                <p className="text-center text-slate-700 text-sm font-handwriting">
-                  {item.caption}
-                </p>
+                {editingId === item.id ? (
+                  <div className="space-y-2">
+                    <input
+                      value={tempCaption}
+                      onChange={(e) => setTempCaption(e.target.value)}
+                      placeholder="Add a title or emojis..."
+                      className="w-full px-3 py-2 border border-slate-300 rounded text-slate-800 text-sm"
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      {['✨','🌍','✈️','📸','❤️','🎒','🏞️','🏙️','🌅','🌊','🍜','🎉'].map((emo) => (
+                        <button
+                          key={emo}
+                          onClick={() => setTempCaption((c) => (c ? `${c} ${emo}` : emo))}
+                          className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-base"
+                          type="button"
+                        >{emo}</button>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={() => {
+                        const id = editingId; const caption = tempCaption;
+                        saveEdit();
+                        try {
+                          if (id) {
+                            const saved = localStorage.getItem(`postcard:${id}`);
+                            const payload = saved ? JSON.parse(saved) : {};
+                            payload.message = caption;
+                            localStorage.setItem(`postcard:${id}`, JSON.stringify(payload));
+                          }
+                        } catch {}
+                      }} className="flex-1 px-3 py-1 rounded bg-emerald-600 text-white text-sm hover:bg-emerald-700">Save</button>
+                      <button onClick={cancelEdit} className="px-3 py-1 rounded bg-slate-200 text-slate-700 text-sm hover:bg-slate-300">Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center gap-2">
+                    <p className="text-center text-slate-700 text-sm font-handwriting">
+                      {item.caption}
+                    </p>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); startEdit(item.id, item.caption); }}
+                      className="ml-1 p-1 rounded bg-slate-100 hover:bg-slate-200"
+                      title="Edit caption"
+                    >
+                      <Pencil className="w-4 h-4 text-slate-600" />
+                    </button>
+                  </div>
+                )}
 
                 {/* Push pin */}
-                <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 rounded-full bg-red-500 shadow-lg border-2 border-red-600"></div>
+                <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 rounded-full bg-red-500 shadow-lg border-2 border-red-600 animate-pulse"></div>
               </div>
             </div>
           ))}

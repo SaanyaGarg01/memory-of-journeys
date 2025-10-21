@@ -1,6 +1,6 @@
 // AI-Generated Postcards Feature
-import { useState } from 'react';
-import { FileText, Download, Sparkles, Image as ImageIcon } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { FileText, Download, Sparkles, Image as ImageIcon, Save } from 'lucide-react';
 
 interface Journey {
   id: string;
@@ -18,6 +18,26 @@ export default function PostcardGenerator({ journeys }: PostcardGeneratorProps) 
   const [selectedJourney, setSelectedJourney] = useState<string>('');
   const [postcardMessage, setPostcardMessage] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [postcardImage, setPostcardImage] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  // Load any previously saved postcard for the selected journey
+  useEffect(() => {
+    if (!selectedJourney) return;
+    try {
+      const saved = localStorage.getItem(`postcard:${selectedJourney}`);
+      if (saved) {
+        const parsed = JSON.parse(saved) as { message?: string; image?: string | null };
+        if (parsed.message) setPostcardMessage(parsed.message);
+        if (parsed.image) setPostcardImage(parsed.image);
+      } else {
+        setPostcardMessage('');
+        setPostcardImage(null);
+      }
+    } catch {
+      // ignore parsing errors
+    }
+  }, [selectedJourney]);
 
   const generatePostcardMessage = (journey: Journey) => {
     setIsGenerating(true);
@@ -36,6 +56,29 @@ export default function PostcardGenerator({ journeys }: PostcardGeneratorProps) 
       setPostcardMessage(message);
       setIsGenerating(false);
     }, 1000);
+  };
+
+  const savePostcard = () => {
+    const journey = journeys.find(j => j.id === selectedJourney);
+    if (!journey || !postcardMessage) {
+      alert('Please select a journey and generate or write a message before saving.');
+      return;
+    }
+    const payload = {
+      id: journey.id,
+      title: journey.title,
+      message: postcardMessage,
+      image: postcardImage, // may be null
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      localStorage.setItem(`postcard:${journey.id}`, JSON.stringify(payload));
+      // Notify other components (gallery) to sync
+      try { window.dispatchEvent(new CustomEvent('postcard:saved', { detail: journey.id })); } catch {}
+      alert('Postcard saved! Your gallery will use this image and text.');
+    } catch (e) {
+      console.error('Failed to save postcard', e);
+    }
   };
 
   const downloadPostcard = () => {
@@ -94,7 +137,6 @@ Generated with ❤️ by Memory of Journeys
             value={selectedJourney}
             onChange={(e) => {
               setSelectedJourney(e.target.value);
-              setPostcardMessage('');
             }}
             className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white"
           >
@@ -131,7 +173,11 @@ Generated with ❤️ by Memory of Journeys
         {/* Postcard Preview */}
         {postcardMessage && selectedJourneyData && (
           <div className="space-y-4">
-            <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl p-8 shadow-xl border-4 border-white">
+            <div
+              className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl p-8 shadow-xl border-4 border-white cursor-pointer group"
+              title="Click to save this postcard"
+              onClick={savePostcard}
+            >
               {/* Postcard Front */}
               <div className="space-y-4">
                 <div className="flex items-center gap-2 text-orange-900">
@@ -140,6 +186,11 @@ Generated with ❤️ by Memory of Journeys
                 </div>
                 
                 <div className="border-2 border-orange-200 rounded-lg p-4 bg-white/50">
+                  {postcardImage && (
+                    <div className="mb-3 rounded overflow-hidden">
+                      <img src={postcardImage} alt="Postcard" className="w-full max-h-64 object-cover" />
+                    </div>
+                  )}
                   <div className="text-center mb-3">
                     <h3 className="text-xl font-bold text-orange-900">{selectedJourneyData.title}</h3>
                     <p className="text-xs text-orange-700">
@@ -175,6 +226,33 @@ Generated with ❤️ by Memory of Journeys
 
             {/* Action Buttons */}
             <div className="flex gap-3">
+              <button
+                onClick={() => fileRef.current?.click()}
+                className="flex-1 flex items-center justify-center gap-2 bg-slate-700 text-white px-6 py-3 rounded-lg font-medium hover:bg-slate-600 transition-colors"
+              >
+                <ImageIcon className="w-5 h-5" />
+                Add/Change Image
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={(e) => {
+                  const f = e.currentTarget.files?.[0];
+                  if (!f) return;
+                  const reader = new FileReader();
+                  reader.onload = () => setPostcardImage(String(reader.result || ''));
+                  reader.readAsDataURL(f);
+                }}
+              />
+              <button
+                onClick={savePostcard}
+                className="flex-1 flex items-center justify-center gap-2 bg-amber-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-amber-500 transition-colors"
+              >
+                <Save className="w-5 h-5" />
+                Save Postcard
+              </button>
               <button
                 onClick={downloadPostcard}
                 className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white px-6 py-3 rounded-lg font-medium hover:opacity-90 transition-opacity"
