@@ -143,7 +143,7 @@ function App(): JSX.Element {
 
 
   // Load profile manually (exposed by navbar)
-  const loadProfile = async () => {
+  const loadProfile = async () => {eates a
     if (!user) return;
 
     setProfileLoading(true);
