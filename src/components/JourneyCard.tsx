@@ -16,12 +16,14 @@ interface JourneyCardProps {
   journey: Journey;
   onLike?: () => void;
   isLiked?: boolean;
+  onDelete?: () => void;
+  onShowViewers?: () => void;
 }
 
 // 🔑 Your AccuWeather API key from .env
 const ACCUWEATHER_API_KEY = import.meta.env.VITE_ACCUWEATHER_API_KEY;
 
-export default function JourneyCard({ journey, onLike, isLiked }: JourneyCardProps) {
+export default function JourneyCard({ journey, onLike, isLiked, onDelete, onShowViewers }: JourneyCardProps) {
   const [moodSummary, setMoodSummary] = useState<string | null>(null);
   const [weatherSummary, setWeatherSummary] = useState<string | null>(null);
   const [travelDNA, setTravelDNA] = useState<string | null>(null);
@@ -155,10 +157,14 @@ export default function JourneyCard({ journey, onLike, isLiked }: JourneyCardPro
 
         {/* Views / Likes */}
         <div className="absolute top-4 right-4 flex gap-2">
-          <div className="px-3 py-1 bg-black/60 backdrop-blur-sm rounded-full text-white text-sm font-medium flex items-center gap-1">
+          <button
+            onClick={onShowViewers}
+            className="px-3 py-1 bg-black/60 hover:bg-slate-700 backdrop-blur-sm rounded-full text-white text-sm font-medium flex items-center gap-1"
+            title="Show viewers"
+          >
             <Eye className="w-4 h-4" />
             {journey.views_count || 0}
-          </div>
+          </button>
           <button
             onClick={onLike}
             className={`px-3 py-1 backdrop-blur-sm rounded-full text-sm font-medium flex items-center gap-1 transition-colors ${
@@ -168,6 +174,14 @@ export default function JourneyCard({ journey, onLike, isLiked }: JourneyCardPro
             <Heart className={`w-4 h-4 ${isLiked ? 'fill-current' : ''}`} />
             {journey.likes_count || 0}
           </button>
+          {onDelete && (
+            <button
+              onClick={onDelete}
+              className="px-3 py-1 bg-black/60 hover:bg-red-600/70 text-white rounded-full text-sm font-medium transition-colors"
+            >
+              Delete
+            </button>
+          )}
         </div>
 
         {/* Type */}

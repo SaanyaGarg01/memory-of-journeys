@@ -53,6 +53,16 @@ async function initSchema() {
         INDEX idx_journeys_created (created_at)
       ) ENGINE=InnoDB;
     `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS journey_views (
+        id CHAR(36) PRIMARY KEY,
+        journey_id CHAR(36) NOT NULL,
+        viewer_id VARCHAR(128) NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_journey_viewer (journey_id, viewer_id),
+        INDEX idx_journey_views_journey (journey_id)
+      ) ENGINE=InnoDB;
+    `);
     console.log('✅ MariaDB schema ready');
   } catch (err) {
     console.error('❌ MariaDB init error:', err);
@@ -184,6 +194,90 @@ function fmtDate(val) {
   if (typeof val === 'string') return val.slice(0, 10);
   try { return val.toISOString().slice(0, 10); } catch { return String(val).slice(0, 10); }
 }
+
+// ---- API: Delete a journey ----
+app.delete('/api/journeys/:id', async (req, res) => {
+  const id = req.params.id;
+  if (!id) return res.status(400).json({ error: 'Missing id' });
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const result = await conn.query('DELETE FROM journeys WHERE id = ?', [id]);
+    if (result.affectedRows > 0) return res.status(204).send();
+    return res.status(404).json({ error: 'Not found' });
+  } catch (err) {
+    console.error('❌ Delete journey failed:', err);
+    res.status(500).json({ error: 'Failed to delete journey' });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+// ---- API: Like a journey (persist) ----
+app.post('/api/journeys/:id/like', async (req, res) => {
+  const id = req.params.id;
+  if (!id) return res.status(400).json({ error: 'Missing id' });
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query('UPDATE journeys SET likes_count = likes_count + 1 WHERE id = ?', [id]);
+    const rows = await conn.query('SELECT likes_count FROM journeys WHERE id = ?', [id]);
+    if (!rows || rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    return res.json({ id, likes_count: Number(rows[0].likes_count || 0) });
+  } catch (err) {
+    console.error('❌ Like journey failed:', err);
+    res.status(500).json({ error: 'Failed to like journey' });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+// ---- API: Record a view (per viewer) ----
+app.post('/api/journeys/:id/view', async (req, res) => {
+  const id = req.params.id;
+  const viewer = (req.body && req.body.viewer_id) ? String(req.body.viewer_id) : '';
+  if (!id) return res.status(400).json({ error: 'Missing id' });
+  if (!viewer) return res.status(400).json({ error: 'Missing viewer_id' });
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const viewId = crypto.randomUUID();
+    // Insert unique viewer; if new, increment journey views_count
+    const result = await conn.query(
+      'INSERT IGNORE INTO journey_views (id, journey_id, viewer_id) VALUES (?, ?, ?)',
+      [viewId, id, viewer]
+    );
+    if (result.affectedRows > 0) {
+      await conn.query('UPDATE journeys SET views_count = views_count + 1 WHERE id = ?', [id]);
+    }
+    const countRows = await conn.query('SELECT COUNT(*) AS total FROM journey_views WHERE journey_id = ?', [id]);
+    const total = Number(countRows?.[0]?.total || 0);
+    res.json({ id, viewer_id: viewer, total });
+  } catch (err) {
+    console.error('❌ Record view failed:', err);
+    res.status(500).json({ error: 'Failed to record view' });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+// ---- API: List viewers ----
+app.get('/api/journeys/:id/views', async (req, res) => {
+  const id = req.params.id;
+  if (!id) return res.status(400).json({ error: 'Missing id' });
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const rows = await conn.query('SELECT viewer_id, created_at FROM journey_views WHERE journey_id = ? ORDER BY created_at DESC LIMIT 50', [id]);
+    const totalRows = await conn.query('SELECT COUNT(*) AS total FROM journey_views WHERE journey_id = ?', [id]);
+    res.json({ total: Number(totalRows?.[0]?.total || 0), viewers: rows });
+  } catch (err) {
+    console.error('❌ Fetch views failed:', err);
+    res.status(500).json({ error: 'Failed to fetch views' });
+  } finally {
+    if (conn) conn.release();
+  }
+});
 
 app.listen(PORT, async () => {
   await initSchema();

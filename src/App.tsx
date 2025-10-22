@@ -308,9 +308,75 @@ useEffect(() => {
     }
   };
 
-  // Handle likes (local optimistic)
-  const handleLike = (journeyId: string) => {
+  // Handle likes (persist to backend with optimistic update)
+  const handleLike = async (journeyId: string) => {
+    if (!journeyId) return; // skip optimistic placeholders
     setJourneys(prev => prev.map(j => j.id === journeyId ? { ...j, likes_count: (j.likes_count || 0) + 1 } : j));
+    try {
+      const res = await fetch(`/api/journeys/${encodeURIComponent(journeyId)}/like`, { method: 'POST' });
+      if (res.ok) {
+        const body = await res.json();
+        setJourneys(prev => prev.map(j => j.id === journeyId ? { ...j, likes_count: body.likes_count ?? j.likes_count } : j));
+        // Reload to ensure server value is reflected (in case of race conditions)
+        void loadJourneys();
+      }
+    } catch (err) {
+      console.warn('Like API failed', err);
+    }
+  };
+
+  // Handle delete journey
+  const handleDelete = async (journeyId: string) => {
+    if (!journeyId) return;
+    try {
+      const res = await fetch(`/api/journeys/${encodeURIComponent(journeyId)}`, { method: 'DELETE' });
+      if (res.status === 204 || res.status === 200) {
+        setJourneys(prev => prev.filter(j => j.id !== journeyId));
+        // Reload to reflect server state definitively
+        void loadJourneys();
+      }
+    } catch (err) {
+      console.warn('Delete API failed', err);
+    }
+  };
+
+  // View tracking helpers
+  const getViewerId = (): string => {
+    try {
+      const key = 'moj_viewer_id';
+      const existing = localStorage.getItem(key);
+      if (existing) return existing;
+      const id = user?.uid || `anon_${crypto.randomUUID()}`;
+      localStorage.setItem(key, id);
+      return id;
+    } catch {
+      return user?.uid || 'anon';
+    }
+  };
+
+  const handleShowViewers = async (journeyId: string) => {
+    if (!journeyId) return;
+    try {
+      const viewer_id = getViewerId();
+      // Record this view (unique by journey+viewer)
+      await fetch(`/api/journeys/${encodeURIComponent(journeyId)}/view`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ viewer_id })
+      });
+      // Fetch viewers list
+      const res = await fetch(`/api/journeys/${encodeURIComponent(journeyId)}/views`);
+      if (res.ok) {
+        const body = await res.json();
+        const total = Number(body.total || 0);
+        setJourneys(prev => prev.map(j => j.id === journeyId ? { ...j, views_count: total } : j));
+        const viewers: Array<{ viewer_id: string; created_at: string }> = body.viewers || [];
+        const first = viewers.slice(0, 5).map(v => v.viewer_id).join(', ');
+        alert(`Views: ${total}${first ? `\nRecent viewers: ${first}` : ''}`);
+      }
+    } catch (err) {
+      console.warn('View tracking failed', err);
+    }
   };
 
   const filteredJourneys = journeys.filter(journey => {
@@ -692,6 +758,8 @@ useEffect(() => {
                     key={journey.id}
                     journey={journey}
                     onLike={() => handleLike(journey.id)}
+                    onDelete={() => handleDelete(journey.id)}
+                    onShowViewers={() => handleShowViewers(journey.id)}
                   />
                 ))}
               </div>
