@@ -198,11 +198,12 @@ useEffect(() => {
   };
 
   // Load journeys (public explore feed)
-  const loadJourneys = async () => {
+  const loadJourneys = async (overrideType?: string) => {
     setLoading(true);
     try {
+      const activeType = overrideType ?? filterType;
       const params = new URLSearchParams({ visibility: 'public', limit: '20' });
-      if (filterType && filterType !== 'all') params.set('journey_type', filterType);
+      if (activeType && activeType !== 'all') params.set('journey_type', activeType);
       const res = await fetch(`/api/journeys?${params.toString()}`);
       const data = await res.json();
       if (Array.isArray(data)) setJourneys(data as Journey[]);
@@ -714,8 +715,9 @@ useEffect(() => {
                 <select
                   value={filterType}
                   onChange={(e) => {
-                    setFilterType(e.target.value);
-                    loadJourneys();
+                    const newType = e.target.value;
+                    setFilterType(newType);
+                    void loadJourneys(newType);
                   }}
                   className={`px-6 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 ${
                     theme === 'dark' 

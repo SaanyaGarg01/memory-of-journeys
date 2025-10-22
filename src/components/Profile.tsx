@@ -20,6 +20,7 @@ const Profile: React.FC<ProfileProps> = ({ firebaseUser, profileData, onProfileU
   });
 
   const [loadingProfile, setLoadingProfile] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [userJourneys, setUserJourneys] = useState<Journey[]>([]);
   const [journeysLoading, setJourneysLoading] = useState(false);
   const [editingJourneyId, setEditingJourneyId] = useState<string | null>(null);
@@ -33,18 +34,14 @@ const Profile: React.FC<ProfileProps> = ({ firebaseUser, profileData, onProfileU
     }
   }, [firebaseUser]);
 
-  // Fetch journeys for this user
+  // Fetch journeys for this user (MariaDB API)
   const loadUserJourneys = async () => {
     setJourneysLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('journeys')
-        .select('*')
-        .eq('user_id', firebaseUser.uid)
-        .order('created_at', { ascending: false });
-
-      if (error) console.error('Error fetching journeys:', error);
-      else setUserJourneys(data as Journey[]);
+      const res = await fetch(`/api/users/${encodeURIComponent(firebaseUser.uid)}/journeys`);
+      if (!res.ok) throw new Error('Failed to load user journeys');
+      const data = await res.json();
+      setUserJourneys(data as Journey[]);
     } catch (err) {
       console.error('Unexpected error fetching journeys:', err);
     } finally {
@@ -77,6 +74,36 @@ const Profile: React.FC<ProfileProps> = ({ firebaseUser, profileData, onProfileU
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+  };
+
+  const handleAvatarFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    try {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setUploadingAvatar(true);
+      const folder = firebaseUser.uid;
+      const path = `${folder}/${Date.now()}_${file.name}`;
+      const { error: upErr } = await supabase.storage.from('avatars').upload(path, file, { upsert: true, contentType: file.type });
+      if (upErr) throw upErr;
+      const { data: pub } = supabase.storage.from('avatars').getPublicUrl(path);
+      const publicUrl = pub?.publicUrl;
+      if (!publicUrl) throw new Error('No public URL');
+      const { error: updErr } = await supabase
+        .from('users')
+        .update({ avatar_url: publicUrl })
+        .eq('firebase_uid', firebaseUser.uid);
+      if (updErr) throw updErr;
+      setFormData(prev => ({ ...prev, avatar_url: publicUrl }));
+      onProfileUpdate({ ...profileData, avatar_url: publicUrl });
+      alert('✅ Profile picture updated');
+    } catch (err) {
+      console.error('Avatar upload failed:', err);
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      alert(`❌ Failed to upload avatar: ${msg}`);
+    } finally {
+      setUploadingAvatar(false);
+      if (e.target) e.target.value = '' as any;
+    }
   };
 
   // Save profile (insert or update)
@@ -189,39 +216,40 @@ const Profile: React.FC<ProfileProps> = ({ firebaseUser, profileData, onProfileU
     });
   };
 
-  // Save journey
+  // Save journey (MariaDB API)
   const handleSaveJourney = async () => {
     try {
-      const journeyData = {
+      const payload: Partial<Journey> = {
         ...journeyForm,
         user_id: firebaseUser.uid,
-        legs: journeyForm.legs || [],
+        legs: (journeyForm.legs || []) as JourneyLeg[],
+        title: journeyForm.title || 'Untitled Journey',
+        journey_type: (journeyForm.journey_type as any) || 'solo',
+        departure_date: journeyForm.departure_date || new Date().toISOString().slice(0,10),
+        return_date: journeyForm.return_date || journeyForm.departure_date || new Date().toISOString().slice(0,10),
+        visibility: (journeyForm.visibility as any) || 'public',
       };
 
-      let data, error;
-
       if (editingJourneyId) {
-        ({ data, error } = await supabase
-          .from('journeys')
-          .update(journeyData)
-          .eq('id', editingJourneyId)
-          .select()
-          .single());
+        const res = await fetch(`/api/journeys/${encodeURIComponent(editingJourneyId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error('Update failed');
+        const data = await res.json();
+        setUserJourneys(prev => prev.map(j => (j.id === editingJourneyId ? (data as Journey) : j)));
       } else {
-        ({ data, error } = await supabase
-          .from('journeys')
-          .insert(journeyData)
-          .select()
-          .single());
+        const res = await fetch('/api/journeys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error('Create failed');
+        const data = await res.json();
+        setUserJourneys(prev => [data as Journey, ...prev]);
       }
 
-      if (error) throw error;
-
-      setUserJourneys(prev =>
-        editingJourneyId
-          ? prev.map(j => (j.id === editingJourneyId ? data : j))
-          : [data, ...prev]
-      );
       setEditingJourneyId(null);
       setJourneyForm({ legs: [] });
       alert('✅ Journey saved!');
@@ -234,8 +262,8 @@ const Profile: React.FC<ProfileProps> = ({ firebaseUser, profileData, onProfileU
   const handleDeleteJourney = async (id: string) => {
     if (!confirm('Are you sure you want to delete this journey?')) return;
     try {
-      const { error } = await supabase.from('journeys').delete().eq('id', id);
-      if (error) throw error;
+      const res = await fetch(`/api/journeys/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (res.status !== 204 && res.status !== 200) throw new Error('Delete failed');
       setUserJourneys(prev => prev.filter(j => j.id !== id));
       alert('🗑 Journey deleted!');
     } catch (err) {
@@ -272,6 +300,15 @@ const Profile: React.FC<ProfileProps> = ({ firebaseUser, profileData, onProfileU
               value={formData.name}
               onChange={handleChange}
             />
+            <div className="flex items-center gap-3">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleAvatarFile}
+                className="text-sm text-gray-200 file:mr-3 file:py-2 file:px-3 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-purple-600 file:text-white hover:file:bg-purple-700"
+              />
+              {uploadingAvatar && <span className="text-gray-300">Uploading...</span>}
+            </div>
             <input
               type="text"
               name="avatar_url"

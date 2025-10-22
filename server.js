@@ -24,6 +24,100 @@ const pool = mariadb.createPool({
   connectionLimit: 5
 });
 
+// ---- API: List journeys for a specific user ----
+app.get('/api/users/:userId/journeys', async (req, res) => {
+  const userId = req.params.userId;
+  if (!userId) return res.status(400).json({ error: 'Missing userId' });
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const rows = await conn.query('SELECT * FROM journeys WHERE user_id = ? ORDER BY created_at DESC LIMIT 100', [userId]);
+    const data = rows.map(r => ({
+      id: r.id,
+      user_id: r.user_id,
+      title: r.title,
+      description: r.description || '',
+      journey_type: r.journey_type,
+      departure_date: fmtDate(r.departure_date),
+      return_date: fmtDate(r.return_date),
+      legs: safeJson(r.legs, []),
+      keywords: safeJson(r.keywords, []),
+      ai_story: r.ai_story || '',
+      similarity_score: Number(r.similarity_score || 0),
+      rarity_score: Number(r.rarity_score || 50),
+      cultural_insights: safeJson(r.cultural_insights, {}),
+      visibility: r.visibility,
+      likes_count: Number(r.likes_count || 0),
+      views_count: Number(r.views_count || 0),
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : '',
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : ''
+    }));
+    res.json(data);
+  } catch (err) {
+    console.error('❌ List user journeys failed:', err);
+    res.status(500).json([]);
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+// ---- API: Update a journey ----
+app.put('/api/journeys/:id', async (req, res) => {
+  const id = req.params.id;
+  if (!id) return res.status(400).json({ error: 'Missing id' });
+  const j = req.body || {};
+  const fields = {
+    title: j.title,
+    description: j.description ?? '',
+    journey_type: j.journey_type,
+    departure_date: j.departure_date,
+    return_date: j.return_date,
+    legs: JSON.stringify(j.legs || []),
+    keywords: JSON.stringify(j.keywords || []),
+    visibility: j.visibility || 'public'
+  };
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query(
+      `UPDATE journeys SET 
+        title = ?, description = ?, journey_type = ?, departure_date = ?, return_date = ?,
+        legs = ?, keywords = ?, visibility = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [fields.title, fields.description, fields.journey_type, fields.departure_date, fields.return_date,
+       fields.legs, fields.keywords, fields.visibility, id]
+    );
+    const rows = await conn.query('SELECT * FROM journeys WHERE id = ? LIMIT 1', [id]);
+    if (!rows || rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    const r = rows[0];
+    return res.json({
+      id: r.id,
+      user_id: r.user_id,
+      title: r.title,
+      description: r.description || '',
+      journey_type: r.journey_type,
+      departure_date: fmtDate(r.departure_date),
+      return_date: fmtDate(r.return_date),
+      legs: safeJson(r.legs, []),
+      keywords: safeJson(r.keywords, []),
+      ai_story: r.ai_story || '',
+      similarity_score: Number(r.similarity_score || 0),
+      rarity_score: Number(r.rarity_score || 50),
+      cultural_insights: safeJson(r.cultural_insights, {}),
+      visibility: r.visibility,
+      likes_count: Number(r.likes_count || 0),
+      views_count: Number(r.views_count || 0),
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : '',
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : ''
+    });
+  } catch (err) {
+    console.error('❌ Update journey failed:', err);
+    res.status(500).json({ error: 'Failed to update journey' });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
 async function initSchema() {
   let conn;
   try {
