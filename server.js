@@ -24,6 +24,94 @@ const pool = mariadb.createPool({
   connectionLimit: 5
 });
 
+// ---- API: Future Plans ----
+app.get('/api/users/:userId/plans', async (req, res) => {
+  const userId = req.params.userId;
+  if (!userId) return res.status(400).json({ error: 'Missing userId' });
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const rows = await conn.query('SELECT * FROM future_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 200', [userId]);
+    res.json(rows.map(r => ({
+      id: r.id,
+      user_id: r.user_id,
+      destination: r.destination,
+      start_date: r.start_date ? new Date(r.start_date).toISOString().slice(0,10) : '',
+      end_date: r.end_date ? new Date(r.end_date).toISOString().slice(0,10) : '',
+      reason: r.reason || '',
+      notes: r.notes || '',
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : '',
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : ''
+    })));
+  } catch (err) {
+    console.error('❌ List future plans failed:', err);
+    res.status(500).json([]);
+  } finally { if (conn) conn.release(); }
+});
+
+app.post('/api/plans', async (req, res) => {
+  const b = req.body || {};
+  if (!b.user_id || !b.destination) return res.status(400).json({ error: 'Missing user_id or destination' });
+  const id = crypto.randomUUID();
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query(
+      `INSERT INTO future_plans (id, user_id, destination, start_date, end_date, reason, notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [id, b.user_id, b.destination, b.start_date || null, b.end_date || null, b.reason || '', b.notes || '']
+    );
+    res.status(201).json({ id, ...b });
+  } catch (err) {
+    console.error('❌ Create plan failed:', err);
+    res.status(500).json({ error: 'Failed to create plan' });
+  } finally { if (conn) conn.release(); }
+});
+
+app.put('/api/plans/:id', async (req, res) => {
+  const id = req.params.id;
+  const b = req.body || {};
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query(
+      `UPDATE future_plans SET destination = ?, start_date = ?, end_date = ?, reason = ?, notes = ?, updated_at = NOW() WHERE id = ?`,
+      [b.destination || '', b.start_date || null, b.end_date || null, b.reason || '', b.notes || '', id]
+    );
+    const rows = await conn.query('SELECT * FROM future_plans WHERE id = ? LIMIT 1', [id]);
+    if (!rows || rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    const r = rows[0];
+    res.json({
+      id: r.id,
+      user_id: r.user_id,
+      destination: r.destination,
+      start_date: r.start_date ? new Date(r.start_date).toISOString().slice(0,10) : '',
+      end_date: r.end_date ? new Date(r.end_date).toISOString().slice(0,10) : '',
+      reason: r.reason || '',
+      notes: r.notes || '',
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : '',
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : ''
+    });
+  } catch (err) {
+    console.error('❌ Update plan failed:', err);
+    res.status(500).json({ error: 'Failed to update plan' });
+  } finally { if (conn) conn.release(); }
+});
+
+app.delete('/api/plans/:id', async (req, res) => {
+  const id = req.params.id;
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const result = await conn.query('DELETE FROM future_plans WHERE id = ?', [id]);
+    if (result.affectedRows > 0) return res.status(204).send();
+    return res.status(404).json({ error: 'Not found' });
+  } catch (err) {
+    console.error('❌ Delete plan failed:', err);
+    res.status(500).json({ error: 'Failed to delete plan' });
+  } finally { if (conn) conn.release(); }
+});
+
 app.delete('/api/albums/:albumId/photos/:photoId', async (req, res) => {
   const { albumId, photoId } = req.params;
   if (!albumId || !photoId) return res.status(400).json({ error: 'Missing albumId or photoId' });
@@ -396,6 +484,21 @@ async function initSchema() {
         content TEXT,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE KEY uniq_album_page (album_id, page_number)
+      ) ENGINE=InnoDB;
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS future_plans (
+        id CHAR(36) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL,
+        destination VARCHAR(255) NOT NULL,
+        start_date DATE,
+        end_date DATE,
+        reason TEXT,
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_future_plans_user (user_id),
+        INDEX idx_future_plans_dates (start_date, end_date)
       ) ENGINE=InnoDB;
     `);
     console.log('✅ MariaDB schema ready');

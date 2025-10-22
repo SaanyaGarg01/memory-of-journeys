@@ -823,16 +823,17 @@ useEffect(() => {
                 <TravelDNAProfile personality={getTravelDNA(journeys.flatMap(j => j.legs))} />
               )}
 
-              {journeys.length > 0 && (() => {
-                const dna = getTravelDNA(journeys.flatMap(j => j.legs));
+              {(() => {
+                const dna = journeys.length > 0 ? getTravelDNA(journeys.flatMap(j => j.legs)) : ({} as any);
                 return (
                   <FutureMemoryPlanner
                     travelPreferences={{
-                      explorer: dna.adventure || 0,
-                      wanderer: dna.city || 0,
-                      seeker: dna.culture || 0,
-                      relaxer: dna.nature || 0
+                      explorer: (dna?.adventure ?? 0),
+                      wanderer: (dna?.city ?? 0),
+                      seeker: (dna?.culture ?? 0),
+                      relaxer: (dna?.relaxation ?? 0)
                     }}
+                    userId={user.uid}
                   />
                 );
               })()}
