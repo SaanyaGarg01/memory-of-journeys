@@ -18,6 +18,7 @@ import WeatherMemory from './components/WeatherMemory';
 import BonusFeatures from './components/BonusFeatures';
 import PostcardGenerator from './components/PostcardGenerator';
 import VoiceJournaling from './components/VoiceJournaling';
+import PhotoAlbum from './components/PhotoAlbum';
 import InteractiveGallery from './components/InteractiveGallery';
 import MemoryTemperature from './components/MemoryTemperature';
 import FriendMemorySync from './components/FriendMemorySync';
@@ -36,7 +37,7 @@ import {
   getCulturalInsights,
 } from './utils/aiStoryGenerator';
 
-type View = 'hero' | 'create' | 'explore' | 'features' | 'profile';
+type View = 'hero' | 'create' | 'explore' | 'features' | 'profile' | 'album';
 type BonusFeatureView = 'overview' | 'postcards' | 'temperature' | 'voice' | 'gallery' | 'friends' | 'whispers';
 
 type ProfileData = {
@@ -511,6 +512,19 @@ useEffect(() => {
               <Plus className="inline w-4 h-4 mr-2" /> Create
             </button>
 
+            <button
+              onClick={() => setView('album')}
+              className={`px-4 py-2 rounded-lg font-medium transition-all duration-300 ${
+                view === 'album'
+                  ? 'bg-pink-500 text-white'
+                  : theme === 'dark'
+                    ? 'text-gray-300 hover:bg-slate-800'
+                    : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              📚 Photo Album
+            </button>
+
             {/* Theme toggle */}
             <button
               onClick={toggleTheme}
@@ -558,6 +572,12 @@ useEffect(() => {
                 onProfileUpdate={setProfileData}
               />
             )}
+          </div>
+        )}
+
+        {view === 'album' && (
+          <div className="max-w-7xl mx-auto px-6 py-12">
+            <PhotoAlbum user={user} />
           </div>
         )}
 

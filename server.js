@@ -24,6 +24,209 @@ const pool = mariadb.createPool({
   connectionLimit: 5
 });
 
+app.delete('/api/albums/:albumId/photos/:photoId', async (req, res) => {
+  const { albumId, photoId } = req.params;
+  if (!albumId || !photoId) return res.status(400).json({ error: 'Missing albumId or photoId' });
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const result = await conn.query('DELETE FROM album_photos WHERE id = ? AND album_id = ?', [photoId, albumId]);
+    if (result.affectedRows > 0) return res.status(204).send();
+    return res.status(404).json({ error: 'Not found' });
+  } catch (err) {
+    console.error('❌ Delete album photo failed:', err);
+    res.status(500).json({ error: 'Failed to delete photo' });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+// ---- API: Album Pages (notes) ----
+app.get('/api/albums/:albumId/pages', async (req, res) => {
+  const { albumId } = req.params;
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const rows = await conn.query('SELECT page_number, content, updated_at FROM album_pages WHERE album_id = ? ORDER BY page_number ASC', [albumId]);
+    res.json(rows.map(r => ({ page_number: Number(r.page_number), content: r.content || '', updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : '' })));
+  } catch (err) {
+    console.error('❌ Get album pages failed:', err);
+    res.status(500).json({ error: 'Failed to get pages' });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.put('/api/albums/:albumId/pages/:pageNumber', async (req, res) => {
+  const { albumId, pageNumber } = req.params;
+  const content = (req.body && req.body.content) ? String(req.body.content) : '';
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const id = crypto.randomUUID();
+    await conn.query(
+      `INSERT INTO album_pages (id, album_id, page_number, content, updated_at) VALUES (?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE content = VALUES(content), updated_at = NOW()`,
+      [id, albumId, Number(pageNumber), content]
+    );
+    const rows = await conn.query('SELECT page_number, content, updated_at FROM album_pages WHERE album_id = ? AND page_number = ? LIMIT 1', [albumId, Number(pageNumber)]);
+    if (!rows || rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    const r = rows[0];
+    res.json({ page_number: Number(r.page_number), content: r.content || '', updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : '' });
+  } catch (err) {
+    console.error('❌ Update album page failed:', err);
+    res.status(500).json({ error: 'Failed to update page' });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+// Alternate upsert via POST (body: { page_number, content })
+app.post('/api/albums/:albumId/pages', async (req, res) => {
+  const { albumId } = req.params;
+  const num = Number(req.body?.page_number || 1);
+  const content = (req.body && req.body.content) ? String(req.body.content) : '';
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const id = crypto.randomUUID();
+    await conn.query(
+      `INSERT INTO album_pages (id, album_id, page_number, content, updated_at) VALUES (?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE content = VALUES(content), updated_at = NOW()`,
+      [id, albumId, num, content]
+    );
+    const rows = await conn.query('SELECT page_number, content, updated_at FROM album_pages WHERE album_id = ? AND page_number = ? LIMIT 1', [albumId, num]);
+    if (!rows || rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    const r = rows[0];
+    res.json({ page_number: Number(r.page_number), content: r.content || '', updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : '' });
+  } catch (err) {
+    console.error('❌ Upsert album page (POST) failed:', err);
+    res.status(500).json({ error: 'Failed to save page' });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+// ---- API: Albums ----
+app.post('/api/albums', async (req, res) => {
+  const b = req.body || {};
+  if (!b.user_id || !b.title) return res.status(400).json({ error: 'Missing user_id or title' });
+  const id = crypto.randomUUID();
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query(
+      `INSERT INTO albums (id, user_id, title, description, journey_id, visibility, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [id, b.user_id, b.title, b.description || '', b.journey_id || null, b.visibility || 'public']
+    );
+    res.status(201).json({ id, ...b });
+  } catch (err) {
+    console.error('❌ Create album failed:', err);
+    res.status(500).json({ error: 'Failed to create album' });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.get('/api/albums', async (req, res) => {
+  const userId = req.query.user_id?.toString();
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    let rows;
+    if (userId) {
+      rows = await conn.query('SELECT * FROM albums WHERE user_id = ? ORDER BY created_at DESC', [userId]);
+    } else {
+      rows = await conn.query("SELECT * FROM albums WHERE visibility='public' ORDER BY created_at DESC LIMIT 50");
+    }
+    res.json(rows.map(r => ({
+      id: r.id,
+      user_id: r.user_id,
+      title: r.title,
+      description: r.description || '',
+      journey_id: r.journey_id || null,
+      visibility: r.visibility,
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : '',
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : ''
+    })));
+  } catch (err) {
+    console.error('❌ List albums failed:', err);
+    res.status(500).json([]);
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.get('/api/albums/:id', async (req, res) => {
+  const id = req.params.id;
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const rows = await conn.query('SELECT * FROM albums WHERE id = ? LIMIT 1', [id]);
+    if (!rows || rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    const r = rows[0];
+    res.json({
+      id: r.id, user_id: r.user_id, title: r.title, description: r.description || '',
+      journey_id: r.journey_id || null, visibility: r.visibility,
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : '',
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : ''
+    });
+  } catch (err) {
+    console.error('❌ Get album failed:', err);
+    res.status(500).json({ error: 'Failed to get album' });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+// ---- API: Album Photos ----
+app.post('/api/albums/:id/photos', async (req, res) => {
+  const albumId = req.params.id;
+  const b = req.body || {};
+  if (!albumId || !b.user_id || !b.image_url) return res.status(400).json({ error: 'Missing albumId, user_id or image_url' });
+  const id = crypto.randomUUID();
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query(
+      `INSERT INTO album_photos (id, album_id, user_id, image_url, caption, page_number, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+      [id, albumId, b.user_id, b.image_url, b.caption || '', Number(b.page_number || 1)]
+    );
+    res.status(201).json({ id, album_id: albumId, ...b });
+  } catch (err) {
+    console.error('❌ Add album photo failed:', err);
+    res.status(500).json({ error: 'Failed to add photo' });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.get('/api/albums/:id/photos', async (req, res) => {
+  const albumId = req.params.id;
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const rows = await conn.query('SELECT * FROM album_photos WHERE album_id = ? ORDER BY page_number ASC, created_at ASC', [albumId]);
+    res.json(rows.map(r => ({
+      id: r.id,
+      album_id: r.album_id,
+      user_id: r.user_id,
+      image_url: r.image_url,
+      caption: r.caption || '',
+      page_number: Number(r.page_number || 1),
+      meta: safeJson(r.meta, {}),
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : ''
+    })));
+  } catch (err) {
+    console.error('❌ List album photos failed:', err);
+    res.status(500).json([]);
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
 // ---- API: List journeys for a specific user ----
 app.get('/api/users/:userId/journeys', async (req, res) => {
   const userId = req.params.userId;
@@ -155,6 +358,44 @@ async function initSchema() {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY uniq_journey_viewer (journey_id, viewer_id),
         INDEX idx_journey_views_journey (journey_id)
+      ) ENGINE=InnoDB;
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS albums (
+        id CHAR(36) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        journey_id CHAR(36),
+        visibility VARCHAR(16) DEFAULT 'public',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_albums_user (user_id),
+        INDEX idx_albums_created (created_at)
+      ) ENGINE=InnoDB;
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS album_photos (
+        id CHAR(36) PRIMARY KEY,
+        album_id CHAR(36) NOT NULL,
+        user_id VARCHAR(64) NOT NULL,
+        image_url TEXT NOT NULL,
+        caption VARCHAR(500),
+        page_number INT DEFAULT 1,
+        meta TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_album_photos_album (album_id),
+        INDEX idx_album_photos_page (album_id, page_number)
+      ) ENGINE=InnoDB;
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS album_pages (
+        id CHAR(36) PRIMARY KEY,
+        album_id CHAR(36) NOT NULL,
+        page_number INT NOT NULL,
+        content TEXT,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_album_page (album_id, page_number)
       ) ENGINE=InnoDB;
     `);
     console.log('✅ MariaDB schema ready');
