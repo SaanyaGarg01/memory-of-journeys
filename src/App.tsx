@@ -201,12 +201,11 @@ useEffect(() => {
   const loadJourneys = async () => {
     setLoading(true);
     try {
-      let query = supabase.from('journeys').select('*').eq('visibility', 'public').order('created_at', { ascending: false }).limit(20);
-      if (filterType !== 'all') query = query.eq('journey_type', filterType);
-
-      const { data, error } = await query;
-      if (error) throw error;
-      if (data) setJourneys(data as Journey[]);
+      const params = new URLSearchParams({ visibility: 'public', limit: '20' });
+      if (filterType && filterType !== 'all') params.set('journey_type', filterType);
+      const res = await fetch(`/api/journeys?${params.toString()}`);
+      const data = await res.json();
+      if (Array.isArray(data)) setJourneys(data as Journey[]);
     } catch (error) {
       console.error('Error loading journeys:', error);
     } finally {
@@ -290,19 +289,17 @@ useEffect(() => {
       setJourneys(prev => [optim, ...prev]);
       setView('explore');
 
-      // Save to Supabase
-      const { data: savedJourney, error } = await supabase
-        .from('journeys')
-        .insert([newJourney])
-        .select()
-        .single();
-
-      if (error) {
-        console.warn('Database save failed:', error);
-        // we keep optimistic but log failure
-      } else if (savedJourney) {
-        // replace optimistic row (id === '') with saved row
-        setJourneys(prev => prev.map(j => (j.id === '' ? savedJourney as Journey : j)));
+      // Save via backend API (MariaDB)
+      const res = await fetch('/api/journeys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newJourney)
+      });
+      if (res.ok) {
+        const savedJourney = await res.json();
+        setJourneys(prev => prev.map(j => (j.id === '' ? (savedJourney as Journey) : j)));
+      } else {
+        console.warn('Database save failed via API');
       }
     } catch (error) {
       console.error('Error creating journey:', error);

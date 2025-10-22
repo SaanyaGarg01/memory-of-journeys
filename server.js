@@ -3,6 +3,8 @@ import express from 'express';
 import cors from 'cors';
 import fetch from 'node-fetch';
 import dotenv from 'dotenv';
+import mariadb from 'mariadb';
+import crypto from 'node:crypto';
 
 dotenv.config();
 
@@ -12,23 +14,178 @@ const PORT = process.env.PORT || 8080;
 app.use(cors());
 app.use(express.json());
 
-// Catch-all proxy for any GET request
-app.use(async (req, res, next) => {
-  try {
-    const targetUrl = req.originalUrl.slice(1); // remove leading "/"
-    if (!targetUrl.startsWith('http')) {
-      return res.status(400).send('Invalid URL');
-    }
+// ---- MariaDB connection pool ----
+const pool = mariadb.createPool({
+  host: process.env.DB_HOST || 'localhost',
+  port: Number(process.env.DB_PORT || 3306),
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_NAME || 'memory_of_journeys',
+  connectionLimit: 5
+});
 
-    const response = await fetch(targetUrl);
-    const data = await response.json();
-    res.json(data);
+async function initSchema() {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS journeys (
+        id CHAR(36) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        journey_type VARCHAR(32) DEFAULT 'solo',
+        departure_date DATE,
+        return_date DATE,
+        legs TEXT NOT NULL,
+        keywords TEXT,
+        ai_story TEXT,
+        similarity_score FLOAT DEFAULT 0,
+        rarity_score FLOAT DEFAULT 50,
+        cultural_insights TEXT,
+        visibility VARCHAR(16) DEFAULT 'public',
+        likes_count INT DEFAULT 0,
+        views_count INT DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_journeys_visibility (visibility),
+        INDEX idx_journeys_type (journey_type),
+        INDEX idx_journeys_created (created_at)
+      ) ENGINE=InnoDB;
+    `);
+    console.log('✅ MariaDB schema ready');
   } catch (err) {
-    console.error('Proxy error:', err);
-    res.status(500).send({ error: 'Proxy fetch failed', details: err.message });
+    console.error('❌ MariaDB init error:', err);
+  } finally {
+    if (conn) conn.release();
+  }
+}
+
+// ---- API: Create journey ----
+app.post('/api/journeys', async (req, res) => {
+  const j = req.body || {};
+  // Basic validation
+  if (!j.title || !Array.isArray(j.legs) || j.legs.length === 0) {
+    return res.status(400).json({ error: 'Invalid journey payload' });
+  }
+  const id = j.id && String(j.id).length ? j.id : crypto.randomUUID();
+  const now = new Date();
+  const doc = {
+    id,
+    user_id: j.user_id || `anon_${id}`,
+    title: j.title,
+    description: j.description || '',
+    journey_type: j.journey_type || 'solo',
+    departure_date: j.departure_date || now.toISOString().slice(0, 10),
+    return_date: j.return_date || j.departure_date || now.toISOString().slice(0, 10),
+    legs: JSON.stringify(j.legs || []),
+    keywords: JSON.stringify(j.keywords || []),
+    ai_story: j.ai_story || '',
+    similarity_score: j.similarity_score ?? 0,
+    rarity_score: j.rarity_score ?? 50,
+    cultural_insights: JSON.stringify(j.cultural_insights || {}),
+    visibility: j.visibility || 'public',
+    likes_count: j.likes_count ?? 0,
+    views_count: j.views_count ?? 0
+  };
+
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query(
+      `INSERT INTO journeys (
+        id, user_id, title, description, journey_type, departure_date, return_date,
+        legs, keywords, ai_story, similarity_score, rarity_score, cultural_insights,
+        visibility, likes_count, views_count, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [
+        doc.id, doc.user_id, doc.title, doc.description, doc.journey_type, doc.departure_date, doc.return_date,
+        doc.legs, doc.keywords, doc.ai_story, doc.similarity_score, doc.rarity_score, doc.cultural_insights,
+        doc.visibility, doc.likes_count, doc.views_count
+      ]
+    );
+
+    // Return normalized object matching frontend types
+    const response = {
+      ...j,
+      id: doc.id,
+      user_id: doc.user_id,
+      departure_date: doc.departure_date,
+      return_date: doc.return_date,
+      legs: JSON.parse(doc.legs),
+      keywords: JSON.parse(doc.keywords),
+      cultural_insights: JSON.parse(doc.cultural_insights),
+      created_at: now.toISOString(),
+      updated_at: now.toISOString()
+    };
+    res.status(201).json(response);
+  } catch (err) {
+    console.error('❌ Create journey failed:', err);
+    res.status(500).json({ error: 'Failed to create journey' });
+  } finally {
+    if (conn) conn.release();
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`✅ CORS proxy running at http://localhost:${PORT}`);
+// ---- API: List public journeys (Explore) ----
+app.get('/api/journeys', async (req, res) => {
+  const visibility = (req.query.visibility || 'public').toString();
+  const journeyType = req.query.journey_type ? req.query.journey_type.toString() : null;
+  const limit = Math.min(parseInt(req.query.limit?.toString() || '20', 10) || 20, 100);
+
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const params = [visibility, limit];
+    let sql = `SELECT * FROM journeys WHERE visibility = ?`;
+    if (journeyType && journeyType !== 'all') {
+      sql += ' AND journey_type = ?';
+      params.splice(1, 0, journeyType);
+    }
+    sql += ' ORDER BY created_at DESC LIMIT ?';
+
+    const rows = await conn.query(sql, params);
+    const data = rows.map(r => ({
+      id: r.id,
+      user_id: r.user_id,
+      title: r.title,
+      description: r.description || '',
+      journey_type: r.journey_type,
+      departure_date: fmtDate(r.departure_date),
+      return_date: fmtDate(r.return_date),
+      legs: safeJson(r.legs, []),
+      keywords: safeJson(r.keywords, []),
+      ai_story: r.ai_story || '',
+      similarity_score: Number(r.similarity_score || 0),
+      rarity_score: Number(r.rarity_score || 50),
+      cultural_insights: safeJson(r.cultural_insights, {}),
+      visibility: r.visibility,
+      likes_count: Number(r.likes_count || 0),
+      views_count: Number(r.views_count || 0),
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : '',
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : ''
+    }));
+    res.json(data);
+  } catch (err) {
+    console.error('❌ List journeys failed:', err);
+    res.status(500).json([]);
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+function safeJson(txt, fallback) {
+  if (txt == null) return fallback;
+  try { return JSON.parse(String(txt)); } catch { return fallback; }
+}
+
+function fmtDate(val) {
+  if (!val) return '';
+  if (typeof val === 'string') return val.slice(0, 10);
+  try { return val.toISOString().slice(0, 10); } catch { return String(val).slice(0, 10); }
+}
+
+app.listen(PORT, async () => {
+  await initSchema();
+  console.log(`✅ API server running at http://localhost:${PORT}`);
 });
