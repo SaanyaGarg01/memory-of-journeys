@@ -439,7 +439,17 @@ useEffect(() => {
       }`}>
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => setView('hero')}>
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-lg flex items-center justify-center">
+            <img 
+              src="/logo.jpg" 
+              alt="Memory of Journeys" 
+              className="w-12 h-12 object-contain"
+              onError={(e) => {
+                // Fallback to compass icon if logo not found
+                e.currentTarget.style.display = 'none';
+                e.currentTarget.nextElementSibling?.classList.remove('hidden');
+              }}
+            />
+            <div className="hidden w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-lg items-center justify-center">
               <Compass className="w-6 h-6 text-white" />
             </div>
             <div>
@@ -448,7 +458,7 @@ useEffect(() => {
               }`}>Memory of Journeys</h1>
               <p className={`text-xs transition-colors duration-300 ${
                 theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
-              }`}>Powered by Supabase</p>
+              }`}>Your Travel Story Begins Here</p>
             </div>
           </div>
 
