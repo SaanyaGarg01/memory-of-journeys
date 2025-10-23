@@ -37,10 +37,28 @@ async def init_schema():
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
-            # album_photos
+            # albums
             await cur.execute(
                 """
-                CREATE TABLE IF NOT EXISTS album_photos (
+                CREATE TABLE IF NOT EXISTS albums (
+                  id CHAR(36) PRIMARY KEY,
+                  user_id VARCHAR(64) NOT NULL,
+                  title VARCHAR(500) NOT NULL,
+                  description TEXT,
+                  journey_id CHAR(36),
+                  visibility VARCHAR(20) DEFAULT 'public',
+                  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                  INDEX idx_albums_user (user_id),
+                  INDEX idx_albums_journey (journey_id)
+                ) ENGINE=InnoDB;
+                """
+            )
+            # album_photos (drop and recreate to ensure schema is correct)
+            await cur.execute("DROP TABLE IF EXISTS album_photos")
+            await cur.execute(
+                """
+                CREATE TABLE album_photos (
                   id CHAR(36) PRIMARY KEY,
                   album_id CHAR(36) NOT NULL,
                   user_id VARCHAR(64) NOT NULL,
@@ -82,6 +100,50 @@ async def init_schema():
                   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                   INDEX idx_future_plans_user (user_id),
                   INDEX idx_future_plans_dates (start_date, end_date)
+                ) ENGINE=InnoDB;
+                """
+            )
+            # journeys
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS journeys (
+                  id CHAR(36) PRIMARY KEY,
+                  user_id VARCHAR(64) NOT NULL,
+                  title VARCHAR(500) NOT NULL,
+                  description TEXT,
+                  journey_type VARCHAR(50) DEFAULT 'solo',
+                  departure_date DATE,
+                  return_date DATE,
+                  legs JSON NOT NULL,
+                  keywords JSON,
+                  ai_story TEXT,
+                  similarity_score FLOAT DEFAULT 0,
+                  rarity_score FLOAT DEFAULT 50,
+                  cultural_insights JSON,
+                  visibility VARCHAR(20) DEFAULT 'public',
+                  likes_count INT DEFAULT 0,
+                  views_count INT DEFAULT 0,
+                  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                  INDEX idx_journeys_user (user_id),
+                  INDEX idx_journeys_visibility (visibility),
+                  INDEX idx_journeys_type (journey_type),
+                  INDEX idx_journeys_created (created_at DESC),
+                  INDEX idx_journeys_likes (likes_count DESC)
+                ) ENGINE=InnoDB;
+                """
+            )
+            # journey_likes
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS journey_likes (
+                  id CHAR(36) PRIMARY KEY,
+                  journey_id CHAR(36) NOT NULL,
+                  user_id VARCHAR(64) NOT NULL,
+                  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  UNIQUE KEY uniq_journey_user_like (journey_id, user_id),
+                  INDEX idx_journey_likes_journey (journey_id),
+                  INDEX idx_journey_likes_user (user_id)
                 ) ENGINE=InnoDB;
                 """
             )

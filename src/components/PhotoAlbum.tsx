@@ -121,33 +121,71 @@ export default function PhotoAlbum({ user }: PhotoAlbumProps) {
     try {
       for (const file of Array.from(files)) {
         try {
+          console.log('📤 Uploading:', file.name);
+          
+          // Step 1: Upload to Supabase
           const path = `${user.uid}/${selectedAlbum.id}/${Date.now()}_${file.name}`;
+          console.log('📁 Upload path:', path);
+          
           const up = await supabase.storage.from('albums').upload(path, file, { upsert: true, contentType: file.type });
-          if (up.error) throw up.error;
+          if (up.error) {
+            console.error('❌ Supabase upload error:', up.error);
+            throw new Error(`Supabase: ${up.error.message}`);
+          }
+          console.log('✅ Uploaded to Supabase');
+          
+          // Step 2: Get public URL
           const pub = supabase.storage.from('albums').getPublicUrl(path);
           const image_url = pub.data?.publicUrl;
-          if (!image_url) throw new Error('No public URL returned for uploaded file');
+          if (!image_url) {
+            console.error('❌ No public URL returned');
+            throw new Error('No public URL returned for uploaded file');
+          }
+          console.log('🔗 Public URL:', image_url);
+          
+          // Step 3: Save metadata to backend
           const payload = { user_id: user.uid, image_url, caption, page_number: pageNum };
-          const res = await fetch(`/api/albums/${encodeURIComponent(selectedAlbum.id)}/photos`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+          console.log('💾 Saving metadata:', payload);
+          
+          const res = await fetch(`/api/albums/${encodeURIComponent(selectedAlbum.id)}/photos`, { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' }, 
+            body: JSON.stringify(payload) 
+          });
+          
           if (!res.ok) {
             const txt = await res.text().catch(()=> '');
-            throw new Error(`Failed to save photo metadata (${res.status}): ${txt}`);
+            console.error('❌ Backend API error:', res.status, txt);
+            throw new Error(`Backend API (${res.status}): ${txt || 'Internal server error - check if backend is running on port 8000'}`);
           }
+          
+          const result = await res.json();
+          console.log('✅ Photo saved successfully:', result);
+          
         } catch (fileErr: any) {
           const msg = fileErr?.message || String(fileErr);
+          console.error('❌ Error uploading file:', file.name, fileErr);
           errors.push(`${file.name}: ${msg}`);
         }
       }
+      
+      if (errors.length === 0) {
+        console.log('✅ All photos uploaded successfully!');
+      }
+      
       await loadPhotos(selectedAlbum.id);
       // Jump to page where user uploaded most recently
       setActivePage(prev => Math.max(prev, pageNum));
       setCaption('');
       if (errors.length) {
-        alert(`Some photos failed:\n${errors.join('\n')}`);
+        alert(`❌ Some photos failed:\n${errors.join('\n')}\n\nCheck browser console (F12) for details.`);
+      } else {
+        alert('✅ Photos uploaded successfully!');
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
-      alert(`Failed to upload photos: ${msg}`);
+      console.error('❌ Upload error:', err);
+      alert(`Failed to upload photos: ${msg}\n\nCheck browser console (F12) for details.`);
     } finally {
       setUploading(false);
       if (e.target) e.target.value = '' as any;
