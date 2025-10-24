@@ -501,6 +501,124 @@ async function initSchema() {
         INDEX idx_future_plans_dates (start_date, end_date)
       ) ENGINE=InnoDB;
     `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS memory_circles (
+        id CHAR(36) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        owner_id VARCHAR(64) NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_memory_circles_owner (owner_id)
+      ) ENGINE=InnoDB;
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS memory_circle_members (
+        id CHAR(36) PRIMARY KEY,
+        circle_id CHAR(36) NOT NULL,
+        user_id VARCHAR(64) NOT NULL,
+        role VARCHAR(32) DEFAULT 'member',
+        joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_circle_member (circle_id, user_id),
+        INDEX idx_circle_members_circle (circle_id),
+        INDEX idx_circle_members_user (user_id)
+      ) ENGINE=InnoDB;
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS memory_circle_journeys (
+        id CHAR(36) PRIMARY KEY,
+        circle_id CHAR(36) NOT NULL,
+        journey_id CHAR(36) NOT NULL,
+        shared_by VARCHAR(64) NOT NULL,
+        shared_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_circle_journey (circle_id, journey_id),
+        INDEX idx_circle_journeys_circle (circle_id)
+      ) ENGINE=InnoDB;
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS collaborative_journals (
+        id CHAR(36) PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        journey_id CHAR(36),
+        created_by VARCHAR(64) NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_collab_journals_creator (created_by)
+      ) ENGINE=InnoDB;
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS collaborative_journal_members (
+        id CHAR(36) PRIMARY KEY,
+        journal_id CHAR(36) NOT NULL,
+        user_id VARCHAR(64) NOT NULL,
+        user_name VARCHAR(255),
+        role VARCHAR(32) DEFAULT 'contributor',
+        joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_journal_member (journal_id, user_id),
+        INDEX idx_journal_members_journal (journal_id),
+        INDEX idx_journal_members_user (user_id)
+      ) ENGINE=InnoDB;
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS collaborative_journal_entries (
+        id CHAR(36) PRIMARY KEY,
+        journal_id CHAR(36) NOT NULL,
+        user_id VARCHAR(64) NOT NULL,
+        user_name VARCHAR(255),
+        content TEXT NOT NULL,
+        entry_type VARCHAR(32) DEFAULT 'text',
+        image_url TEXT,
+        location VARCHAR(255),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_journal_entries_journal (journal_id),
+        INDEX idx_journal_entries_created (created_at)
+      ) ENGINE=InnoDB;
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS anonymous_memories (
+        id CHAR(36) PRIMARY KEY,
+        journey_id CHAR(36) NOT NULL,
+        original_user_id VARCHAR(64) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        story TEXT NOT NULL,
+        location VARCHAR(255),
+        travel_type VARCHAR(32),
+        keywords TEXT,
+        is_available BOOLEAN DEFAULT TRUE,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_anon_memories_available (is_available),
+        INDEX idx_anon_memories_type (travel_type)
+      ) ENGINE=InnoDB;
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS memory_exchanges (
+        id CHAR(36) PRIMARY KEY,
+        user1_id VARCHAR(64) NOT NULL,
+        user2_id VARCHAR(64) NOT NULL,
+        memory1_id CHAR(36) NOT NULL,
+        memory2_id CHAR(36) NOT NULL,
+        exchanged_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_memory_exchanges_user1 (user1_id),
+        INDEX idx_memory_exchanges_user2 (user2_id)
+      ) ENGINE=InnoDB;
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS user_friends (
+        id CHAR(36) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL,
+        friend_id VARCHAR(64) NOT NULL,
+        friend_name VARCHAR(255),
+        friend_email VARCHAR(255),
+        friend_avatar VARCHAR(500),
+        status VARCHAR(20) DEFAULT 'active',
+        added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_user_friends_user (user_id),
+        INDEX idx_user_friends_friend (friend_id),
+        UNIQUE KEY uniq_user_friend (user_id, friend_id)
+      ) ENGINE=InnoDB;
+    `);
     console.log('✅ MariaDB schema ready');
   } catch (err) {
     console.error('❌ MariaDB init error:', err);
@@ -715,6 +833,462 @@ app.get('/api/journeys/:id/views', async (req, res) => {
   } finally {
     if (conn) conn.release();
   }
+});
+
+// ---- API: Memory Circles ----
+app.post('/api/memory-circles', async (req, res) => {
+  const { name, description, owner_id } = req.body || {};
+  if (!name || !owner_id) return res.status(400).json({ error: 'Missing name or owner_id' });
+  const id = crypto.randomUUID();
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query(
+      `INSERT INTO memory_circles (id, name, description, owner_id, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())`,
+      [id, name, description || '', owner_id]
+    );
+    // Auto-add owner as admin member
+    const memberId = crypto.randomUUID();
+    await conn.query(
+      `INSERT INTO memory_circle_members (id, circle_id, user_id, role, joined_at) VALUES (?, ?, ?, 'admin', NOW())`,
+      [memberId, id, owner_id]
+    );
+    res.status(201).json({ id, name, description, owner_id });
+  } catch (err) {
+    console.error('❌ Create memory circle failed:', err);
+    res.status(500).json({ error: 'Failed to create memory circle' });
+  } finally { if (conn) conn.release(); }
+});
+
+app.get('/api/memory-circles', async (req, res) => {
+  const userId = req.query.user_id?.toString();
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    let rows;
+    if (userId) {
+      rows = await conn.query(
+        `SELECT mc.*, mcm.role FROM memory_circles mc 
+         INNER JOIN memory_circle_members mcm ON mc.id = mcm.circle_id 
+         WHERE mcm.user_id = ? ORDER BY mc.created_at DESC`,
+        [userId]
+      );
+    } else {
+      rows = await conn.query('SELECT * FROM memory_circles ORDER BY created_at DESC LIMIT 50');
+    }
+    res.json(rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      description: r.description || '',
+      owner_id: r.owner_id,
+      role: r.role || 'member',
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : ''
+    })));
+  } catch (err) {
+    console.error('❌ List memory circles failed:', err);
+    res.status(500).json([]);
+  } finally { if (conn) conn.release(); }
+});
+
+app.get('/api/memory-circles/:id', async (req, res) => {
+  const id = req.params.id;
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const rows = await conn.query('SELECT * FROM memory_circles WHERE id = ? LIMIT 1', [id]);
+    if (!rows || rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    const members = await conn.query('SELECT * FROM memory_circle_members WHERE circle_id = ?', [id]);
+    const journeys = await conn.query(
+      `SELECT j.*, mcj.shared_by, mcj.shared_at FROM journeys j 
+       INNER JOIN memory_circle_journeys mcj ON j.id = mcj.journey_id 
+       WHERE mcj.circle_id = ? ORDER BY mcj.shared_at DESC`,
+      [id]
+    );
+    const r = rows[0];
+    res.json({
+      id: r.id,
+      name: r.name,
+      description: r.description || '',
+      owner_id: r.owner_id,
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : '',
+      members: members.map(m => ({ user_id: m.user_id, role: m.role, joined_at: m.joined_at })),
+      journeys: journeys.map(j => ({
+        id: j.id,
+        title: j.title,
+        shared_by: j.shared_by,
+        shared_at: j.shared_at,
+        legs: safeJson(j.legs, [])
+      }))
+    });
+  } catch (err) {
+    console.error('❌ Get memory circle failed:', err);
+    res.status(500).json({ error: 'Failed to get memory circle' });
+  } finally { if (conn) conn.release(); }
+});
+
+app.post('/api/memory-circles/:id/members', async (req, res) => {
+  const circleId = req.params.id;
+  const { user_id } = req.body || {};
+  if (!user_id) return res.status(400).json({ error: 'Missing user_id' });
+  const id = crypto.randomUUID();
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query(
+      `INSERT INTO memory_circle_members (id, circle_id, user_id, role, joined_at) VALUES (?, ?, ?, 'member', NOW())`,
+      [id, circleId, user_id]
+    );
+    res.status(201).json({ id, circle_id: circleId, user_id, role: 'member' });
+  } catch (err) {
+    console.error('❌ Add member failed:', err);
+    res.status(500).json({ error: 'Failed to add member' });
+  } finally { if (conn) conn.release(); }
+});
+
+app.post('/api/memory-circles/:id/journeys', async (req, res) => {
+  const circleId = req.params.id;
+  const { journey_id, shared_by } = req.body || {};
+  if (!journey_id || !shared_by) return res.status(400).json({ error: 'Missing journey_id or shared_by' });
+  const id = crypto.randomUUID();
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query(
+      `INSERT INTO memory_circle_journeys (id, circle_id, journey_id, shared_by, shared_at) VALUES (?, ?, ?, ?, NOW())`,
+      [id, circleId, journey_id, shared_by]
+    );
+    res.status(201).json({ id, circle_id: circleId, journey_id, shared_by });
+  } catch (err) {
+    console.error('❌ Share journey to circle failed:', err);
+    res.status(500).json({ error: 'Failed to share journey' });
+  } finally { if (conn) conn.release(); }
+});
+
+// ---- API: Collaborative Journals ----
+app.post('/api/collaborative-journals', async (req, res) => {
+  const { title, description, journey_id, created_by, members } = req.body || {};
+  if (!title || !created_by) return res.status(400).json({ error: 'Missing title or created_by' });
+  const id = crypto.randomUUID();
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query(
+      `INSERT INTO collaborative_journals (id, title, description, journey_id, created_by, created_at, updated_at) 
+       VALUES (?, ?, ?, ?, ?, NOW(), NOW())`,
+      [id, title, description || '', journey_id || null, created_by]
+    );
+    // Auto-add creator as admin
+    const creatorMemberId = crypto.randomUUID();
+    await conn.query(
+      `INSERT INTO collaborative_journal_members (id, journal_id, user_id, role, joined_at) VALUES (?, ?, ?, 'admin', NOW())`,
+      [creatorMemberId, id, created_by]
+    );
+    // Add other members if provided
+    if (Array.isArray(members)) {
+      for (const member of members) {
+        if (member.user_id !== created_by) {
+          const memberId = crypto.randomUUID();
+          await conn.query(
+            `INSERT INTO collaborative_journal_members (id, journal_id, user_id, user_name, role, joined_at) 
+             VALUES (?, ?, ?, ?, 'contributor', NOW())`,
+            [memberId, id, member.user_id, member.user_name || '']
+          );
+        }
+      }
+    }
+    res.status(201).json({ id, title, description, created_by });
+  } catch (err) {
+    console.error('❌ Create collaborative journal failed:', err);
+    res.status(500).json({ error: 'Failed to create collaborative journal' });
+  } finally { if (conn) conn.release(); }
+});
+
+app.get('/api/collaborative-journals', async (req, res) => {
+  const userId = req.query.user_id?.toString();
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    let rows;
+    if (userId) {
+      rows = await conn.query(
+        `SELECT cj.*, cjm.role FROM collaborative_journals cj 
+         INNER JOIN collaborative_journal_members cjm ON cj.id = cjm.journal_id 
+         WHERE cjm.user_id = ? ORDER BY cj.updated_at DESC`,
+        [userId]
+      );
+    } else {
+      rows = await conn.query('SELECT * FROM collaborative_journals ORDER BY updated_at DESC LIMIT 50');
+    }
+    res.json(rows.map(r => ({
+      id: r.id,
+      title: r.title,
+      description: r.description || '',
+      created_by: r.created_by,
+      role: r.role || 'contributor',
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : '',
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : ''
+    })));
+  } catch (err) {
+    console.error('❌ List collaborative journals failed:', err);
+    res.status(500).json([]);
+  } finally { if (conn) conn.release(); }
+});
+
+app.get('/api/collaborative-journals/:id', async (req, res) => {
+  const id = req.params.id;
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const rows = await conn.query('SELECT * FROM collaborative_journals WHERE id = ? LIMIT 1', [id]);
+    if (!rows || rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    const members = await conn.query('SELECT * FROM collaborative_journal_members WHERE journal_id = ?', [id]);
+    const entries = await conn.query(
+      'SELECT * FROM collaborative_journal_entries WHERE journal_id = ? ORDER BY created_at ASC',
+      [id]
+    );
+    const r = rows[0];
+    res.json({
+      id: r.id,
+      title: r.title,
+      description: r.description || '',
+      journey_id: r.journey_id,
+      created_by: r.created_by,
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : '',
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : '',
+      members: members.map(m => ({ user_id: m.user_id, user_name: m.user_name, role: m.role })),
+      entries: entries.map(e => ({
+        id: e.id,
+        user_id: e.user_id,
+        user_name: e.user_name,
+        content: e.content,
+        entry_type: e.entry_type,
+        image_url: e.image_url,
+        location: e.location,
+        created_at: e.created_at ? new Date(e.created_at).toISOString() : ''
+      }))
+    });
+  } catch (err) {
+    console.error('❌ Get collaborative journal failed:', err);
+    res.status(500).json({ error: 'Failed to get journal' });
+  } finally { if (conn) conn.release(); }
+});
+
+app.post('/api/collaborative-journals/:id/entries', async (req, res) => {
+  const journalId = req.params.id;
+  const { user_id, user_name, content, entry_type, image_url, location } = req.body || {};
+  if (!user_id || !content) return res.status(400).json({ error: 'Missing user_id or content' });
+  const id = crypto.randomUUID();
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query(
+      `INSERT INTO collaborative_journal_entries (id, journal_id, user_id, user_name, content, entry_type, image_url, location, created_at, updated_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [id, journalId, user_id, user_name || '', content, entry_type || 'text', image_url || null, location || '']
+    );
+    // Update journal's updated_at
+    await conn.query('UPDATE collaborative_journals SET updated_at = NOW() WHERE id = ?', [journalId]);
+    res.status(201).json({ id, journal_id: journalId, user_id, content });
+  } catch (err) {
+    console.error('❌ Add journal entry failed:', err);
+    res.status(500).json({ error: 'Failed to add entry' });
+  } finally { if (conn) conn.release(); }
+});
+
+app.post('/api/collaborative-journals/:id/members', async (req, res) => {
+  const journalId = req.params.id;
+  const { user_id, user_name } = req.body || {};
+  if (!user_id) return res.status(400).json({ error: 'Missing user_id' });
+  const id = crypto.randomUUID();
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query(
+      `INSERT INTO collaborative_journal_members (id, journal_id, user_id, user_name, role, joined_at) 
+       VALUES (?, ?, ?, ?, 'contributor', NOW())`,
+      [id, journalId, user_id, user_name || '']
+    );
+    res.status(201).json({ id, journal_id: journalId, user_id, user_name });
+  } catch (err) {
+    console.error('❌ Add journal member failed:', err);
+    res.status(500).json({ error: 'Failed to add member' });
+  } finally { if (conn) conn.release(); }
+});
+
+// ---- API: Anonymous Memory Exchange ----
+app.post('/api/anonymous-memories', async (req, res) => {
+  const { journey_id, user_id, title, story, location, travel_type, keywords } = req.body || {};
+  if (!journey_id || !user_id || !title || !story) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  const id = crypto.randomUUID();
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query(
+      `INSERT INTO anonymous_memories (id, journey_id, original_user_id, title, story, location, travel_type, keywords, is_available, created_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE, NOW())`,
+      [id, journey_id, user_id, title, story, location || '', travel_type || '', JSON.stringify(keywords || [])]
+    );
+    res.status(201).json({ id, title, location, travel_type });
+  } catch (err) {
+    console.error('❌ Create anonymous memory failed:', err);
+    res.status(500).json({ error: 'Failed to create anonymous memory' });
+  } finally { if (conn) conn.release(); }
+});
+
+app.get('/api/anonymous-memories', async (req, res) => {
+  const travelType = req.query.travel_type?.toString();
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    let sql = 'SELECT id, title, story, location, travel_type, keywords, created_at FROM anonymous_memories WHERE is_available = TRUE';
+    const params = [];
+    if (travelType && travelType !== 'all') {
+      sql += ' AND travel_type = ?';
+      params.push(travelType);
+    }
+    sql += ' ORDER BY created_at DESC LIMIT 50';
+    const rows = await conn.query(sql, params);
+    res.json(rows.map(r => ({
+      id: r.id,
+      title: r.title,
+      story: r.story,
+      location: r.location || '',
+      travel_type: r.travel_type || '',
+      keywords: safeJson(r.keywords, []),
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : ''
+    })));
+  } catch (err) {
+    console.error('❌ List anonymous memories failed:', err);
+    res.status(500).json([]);
+  } finally { if (conn) conn.release(); }
+});
+
+app.post('/api/memory-exchanges', async (req, res) => {
+  const { user1_id, user2_id, memory1_id, memory2_id } = req.body || {};
+  if (!user1_id || !memory1_id || !memory2_id) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  const id = crypto.randomUUID();
+  const finalUser2 = user2_id || 'anonymous';
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    // Mark both memories as unavailable
+    await conn.query('UPDATE anonymous_memories SET is_available = FALSE WHERE id IN (?, ?)', [memory1_id, memory2_id]);
+    await conn.query(
+      `INSERT INTO memory_exchanges (id, user1_id, user2_id, memory1_id, memory2_id, exchanged_at) 
+       VALUES (?, ?, ?, ?, ?, NOW())`,
+      [id, user1_id, finalUser2, memory1_id, memory2_id]
+    );
+    // Fetch the exchanged memories
+    const memories = await conn.query(
+      'SELECT id, title, story, location, travel_type FROM anonymous_memories WHERE id IN (?, ?)',
+      [memory1_id, memory2_id]
+    );
+    res.status(201).json({
+      id,
+      exchanged_at: new Date().toISOString(),
+      memories: memories.map(m => ({
+        id: m.id,
+        title: m.title,
+        story: m.story,
+        location: m.location,
+        travel_type: m.travel_type
+      }))
+    });
+  } catch (err) {
+    console.error('❌ Create memory exchange failed:', err);
+    res.status(500).json({ error: 'Failed to exchange memories' });
+  } finally { if (conn) conn.release(); }
+});
+
+app.get('/api/memory-exchanges/:userId', async (req, res) => {
+  const userId = req.params.userId;
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const rows = await conn.query(
+      'SELECT * FROM memory_exchanges WHERE user1_id = ? OR user2_id = ? ORDER BY exchanged_at DESC LIMIT 50',
+      [userId, userId]
+    );
+    const exchanges = [];
+    for (const r of rows) {
+      const memories = await conn.query(
+        'SELECT id, title, story, location FROM anonymous_memories WHERE id IN (?, ?)',
+        [r.memory1_id, r.memory2_id]
+      );
+      exchanges.push({
+        id: r.id,
+        exchanged_at: r.exchanged_at ? new Date(r.exchanged_at).toISOString() : '',
+        memories: memories.map(m => ({ id: m.id, title: m.title, story: m.story, location: m.location }))
+      });
+    }
+    res.json(exchanges);
+  } catch (err) {
+    console.error('❌ Get memory exchanges failed:', err);
+    res.status(500).json([]);
+  } finally { if (conn) conn.release(); }
+});
+
+// ---- API: Friends/Contacts ----
+app.post('/api/friends', async (req, res) => {
+  const { user_id, friend_id, friend_name, friend_email, friend_avatar } = req.body || {};
+  if (!user_id || !friend_id) return res.status(400).json({ error: 'Missing user_id or friend_id' });
+  const id = crypto.randomUUID();
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query(
+      `INSERT INTO user_friends (id, user_id, friend_id, friend_name, friend_email, friend_avatar, status, added_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'active', NOW())`,
+      [id, user_id, friend_id, friend_name || '', friend_email || '', friend_avatar || '']
+    );
+    res.status(201).json({ id, user_id, friend_id, friend_name, friend_email, friend_avatar });
+  } catch (err) {
+    console.error('❌ Add friend failed:', err);
+    res.status(500).json({ error: 'Failed to add friend' });
+  } finally { if (conn) conn.release(); }
+});
+
+app.get('/api/friends', async (req, res) => {
+  const userId = req.query.user_id?.toString();
+  if (!userId) return res.status(400).json({ error: 'Missing user_id' });
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const rows = await conn.query(
+      'SELECT * FROM user_friends WHERE user_id = ? AND status = "active" ORDER BY added_at DESC',
+      [userId]
+    );
+    res.json(rows.map(r => ({
+      id: r.id,
+      user_id: r.user_id,
+      friend_id: r.friend_id,
+      friend_name: r.friend_name || '',
+      friend_email: r.friend_email || '',
+      friend_avatar: r.friend_avatar || '',
+      status: r.status,
+      added_at: r.added_at ? new Date(r.added_at).toISOString() : ''
+    })));
+  } catch (err) {
+    console.error('❌ List friends failed:', err);
+    res.status(500).json([]);
+  } finally { if (conn) conn.release(); }
+});
+
+app.delete('/api/friends/:id', async (req, res) => {
+  const id = req.params.id;
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query('DELETE FROM user_friends WHERE id = ?', [id]);
+    res.status(204).send();
+  } catch (err) {
+    console.error('❌ Delete friend failed:', err);
+    res.status(500).json({ error: 'Failed to delete friend' });
+  } finally { if (conn) conn.release(); }
 });
 
 app.listen(PORT, async () => {

@@ -842,6 +842,485 @@ async def like_journey(journey_id: str):
             return {"likes_count": row[0] or 0}
 
 
+# ---------- Social Features Models ----------
+class MemoryCircleCreate(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    owner_id: str
+
+class CircleMemberAdd(BaseModel):
+    user_id: str
+
+class CircleJourneyShare(BaseModel):
+    journey_id: str
+    shared_by: str
+
+class CollaborativeJournalCreate(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    created_by: str
+    members: List[dict] = []
+
+class JournalEntryCreate(BaseModel):
+    user_id: str
+    user_name: str
+    content: str
+    entry_type: str = "text"
+    image_url: Optional[str] = None
+    location: Optional[str] = None
+
+class JournalMemberAdd(BaseModel):
+    user_id: str
+    user_name: Optional[str] = None
+
+class AnonymousMemoryCreate(BaseModel):
+    journey_id: str
+    user_id: str
+    title: str
+    story: str
+    location: Optional[str] = ""
+    travel_type: Optional[str] = "solo"
+    keywords: List[str] = []
+
+class MemoryExchangeCreate(BaseModel):
+    user1_id: str
+    user2_id: str
+    memory1_id: str
+    memory2_id: str
+
+class FriendCreate(BaseModel):
+    user_id: str
+    friend_id: str
+    friend_name: Optional[str] = ""
+    friend_email: Optional[str] = ""
+    friend_avatar: Optional[str] = ""
+
+
+# ---------- Memory Circles ----------
+@app.post("/api/memory-circles", status_code=201)
+async def create_memory_circle(body: MemoryCircleCreate):
+    if not body.name or not body.owner_id:
+        raise HTTPException(status_code=400, detail="Missing name or owner_id")
+    
+    circle_id = str(uuid.uuid4())
+    member_id = str(uuid.uuid4())
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """INSERT INTO memory_circles (id, name, description, owner_id, created_at, updated_at)
+                   VALUES (%s, %s, %s, %s, NOW(), NOW())""",
+                (circle_id, body.name, body.description or "", body.owner_id)
+            )
+            # Auto-add owner as admin
+            await cur.execute(
+                """INSERT INTO memory_circle_members (id, circle_id, user_id, role, joined_at)
+                   VALUES (%s, %s, %s, 'admin', NOW())""",
+                (member_id, circle_id, body.owner_id)
+            )
+            return {
+                "id": circle_id,
+                "name": body.name,
+                "description": body.description or "",
+                "owner_id": body.owner_id
+            }
+
+
+@app.get("/api/memory-circles")
+async def list_memory_circles(user_id: Optional[str] = Query(None)):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            if user_id:
+                await cur.execute(
+                    """SELECT mc.*, mcm.role FROM memory_circles mc
+                       INNER JOIN memory_circle_members mcm ON mc.id = mcm.circle_id
+                       WHERE mcm.user_id = %s ORDER BY mc.created_at DESC""",
+                    (user_id,)
+                )
+            else:
+                await cur.execute("SELECT *, 'member' as role FROM memory_circles ORDER BY created_at DESC LIMIT 50")
+            
+            rows = await cur.fetchall()
+            circles = []
+            for r in rows:
+                circles.append({
+                    "id": r[0],
+                    "name": r[1],
+                    "description": r[2] or "",
+                    "owner_id": r[3],
+                    "role": r[6] if len(r) > 6 else "member",
+                    "created_at": r[4].isoformat() if r[4] else ""
+                })
+            return circles
+
+
+@app.get("/api/memory-circles/{circle_id}")
+async def get_memory_circle(circle_id: str):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT * FROM memory_circles WHERE id = %s LIMIT 1", (circle_id,))
+            row = await cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Circle not found")
+            
+            # Get members
+            await cur.execute("SELECT * FROM memory_circle_members WHERE circle_id = %s", (circle_id,))
+            members = await cur.fetchall()
+            
+            # Get journeys
+            await cur.execute(
+                """SELECT j.*, mcj.shared_by FROM journeys j
+                   INNER JOIN memory_circle_journeys mcj ON j.id = mcj.journey_id
+                   WHERE mcj.circle_id = %s ORDER BY mcj.shared_at DESC""",
+                (circle_id,)
+            )
+            journeys = await cur.fetchall()
+            
+            return {
+                "id": row[0],
+                "name": row[1],
+                "description": row[2] or "",
+                "owner_id": row[3],
+                "created_at": row[4].isoformat() if row[4] else "",
+                "members": [{"user_id": m[2], "role": m[3]} for m in members],
+                "journeys": [{"id": j[0], "title": j[2], "shared_by": j[18]} for j in journeys] if journeys else []
+            }
+
+
+@app.post("/api/memory-circles/{circle_id}/members", status_code=201)
+async def add_circle_member(circle_id: str, body: CircleMemberAdd):
+    if not body.user_id:
+        raise HTTPException(status_code=400, detail="Missing user_id")
+    
+    member_id = str(uuid.uuid4())
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """INSERT INTO memory_circle_members (id, circle_id, user_id, role, joined_at)
+                   VALUES (%s, %s, %s, 'member', NOW())""",
+                (member_id, circle_id, body.user_id)
+            )
+            return {"id": member_id, "circle_id": circle_id, "user_id": body.user_id}
+
+
+@app.post("/api/memory-circles/{circle_id}/journeys", status_code=201)
+async def share_journey_to_circle(circle_id: str, body: CircleJourneyShare):
+    if not body.journey_id or not body.shared_by:
+        raise HTTPException(status_code=400, detail="Missing journey_id or shared_by")
+    
+    share_id = str(uuid.uuid4())
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """INSERT INTO memory_circle_journeys (id, circle_id, journey_id, shared_by, shared_at)
+                   VALUES (%s, %s, %s, %s, NOW())""",
+                (share_id, circle_id, body.journey_id, body.shared_by)
+            )
+            return {"id": share_id, "circle_id": circle_id, "journey_id": body.journey_id}
+
+
+# ---------- Collaborative Journals ----------
+@app.post("/api/collaborative-journals", status_code=201)
+async def create_collaborative_journal(body: CollaborativeJournalCreate):
+    if not body.title or not body.created_by:
+        raise HTTPException(status_code=400, detail="Missing title or created_by")
+    
+    journal_id = str(uuid.uuid4())
+    member_id = str(uuid.uuid4())
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """INSERT INTO collaborative_journals (id, title, description, created_by, created_at, updated_at)
+                   VALUES (%s, %s, %s, %s, NOW(), NOW())""",
+                (journal_id, body.title, body.description or "", body.created_by)
+            )
+            # Auto-add creator as admin
+            await cur.execute(
+                """INSERT INTO collaborative_journal_members (id, journal_id, user_id, user_name, role, joined_at)
+                   VALUES (%s, %s, %s, %s, 'admin', NOW())""",
+                (member_id, journal_id, body.created_by, "Creator")
+            )
+            return {
+                "id": journal_id,
+                "title": body.title,
+                "description": body.description or "",
+                "created_by": body.created_by
+            }
+
+
+@app.get("/api/collaborative-journals")
+async def list_collaborative_journals(user_id: Optional[str] = Query(None)):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            if user_id:
+                await cur.execute(
+                    """SELECT cj.*, cjm.role FROM collaborative_journals cj
+                       INNER JOIN collaborative_journal_members cjm ON cj.id = cjm.journal_id
+                       WHERE cjm.user_id = %s ORDER BY cj.created_at DESC""",
+                    (user_id,)
+                )
+            else:
+                await cur.execute("SELECT *, 'member' as role FROM collaborative_journals ORDER BY created_at DESC LIMIT 50")
+            
+            rows = await cur.fetchall()
+            journals = []
+            for r in rows:
+                journals.append({
+                    "id": r[0],
+                    "title": r[1],
+                    "description": r[2] or "",
+                    "created_by": r[3],
+                    "role": r[6] if len(r) > 6 else "member",
+                    "created_at": r[4].isoformat() if r[4] else "",
+                    "updated_at": r[5].isoformat() if r[5] else ""
+                })
+            return journals
+
+
+@app.get("/api/collaborative-journals/{journal_id}")
+async def get_collaborative_journal(journal_id: str):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT * FROM collaborative_journals WHERE id = %s LIMIT 1", (journal_id,))
+            row = await cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Journal not found")
+            
+            # Get members
+            await cur.execute("SELECT * FROM collaborative_journal_members WHERE journal_id = %s", (journal_id,))
+            members = await cur.fetchall()
+            
+            # Get entries
+            await cur.execute(
+                "SELECT * FROM collaborative_journal_entries WHERE journal_id = %s ORDER BY created_at DESC",
+                (journal_id,)
+            )
+            entries = await cur.fetchall()
+            
+            return {
+                "id": row[0],
+                "title": row[1],
+                "description": row[2] or "",
+                "created_by": row[3],
+                "created_at": row[4].isoformat() if row[4] else "",
+                "updated_at": row[5].isoformat() if row[5] else "",
+                "members": [{"user_id": m[2], "user_name": m[3] or "", "role": m[4]} for m in members],
+                "entries": [{"id": e[0], "user_id": e[2], "user_name": e[3] or "", "content": e[4] or "", "entry_type": e[5], "image_url": e[6], "location": e[7], "created_at": e[8].isoformat() if e[8] else ""} for e in entries]
+            }
+
+
+@app.post("/api/collaborative-journals/{journal_id}/entries", status_code=201)
+async def add_journal_entry(journal_id: str, body: JournalEntryCreate):
+    if not body.user_id or not body.content:
+        raise HTTPException(status_code=400, detail="Missing user_id or content")
+    
+    entry_id = str(uuid.uuid4())
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """INSERT INTO collaborative_journal_entries (id, journal_id, user_id, user_name, content, entry_type, image_url, location, created_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())""",
+                (entry_id, journal_id, body.user_id, body.user_name, body.content, body.entry_type, body.image_url, body.location)
+            )
+            # Update journal timestamp
+            await cur.execute("UPDATE collaborative_journals SET updated_at = NOW() WHERE id = %s", (journal_id,))
+            return {"id": entry_id, "journal_id": journal_id}
+
+
+@app.post("/api/collaborative-journals/{journal_id}/members", status_code=201)
+async def add_journal_member(journal_id: str, body: JournalMemberAdd):
+    if not body.user_id:
+        raise HTTPException(status_code=400, detail="Missing user_id")
+    
+    member_id = str(uuid.uuid4())
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """INSERT INTO collaborative_journal_members (id, journal_id, user_id, user_name, role, joined_at)
+                   VALUES (%s, %s, %s, %s, 'contributor', NOW())""",
+                (member_id, journal_id, body.user_id, body.user_name or "")
+            )
+            return {"id": member_id, "journal_id": journal_id, "user_id": body.user_id}
+
+
+# ---------- Anonymous Story Exchange ----------
+@app.post("/api/anonymous-memories", status_code=201)
+async def create_anonymous_memory(body: AnonymousMemoryCreate):
+    if not body.journey_id or not body.user_id or not body.title or not body.story:
+        raise HTTPException(status_code=400, detail="Missing required fields")
+    
+    memory_id = str(uuid.uuid4())
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """INSERT INTO anonymous_memories (id, journey_id, original_user_id, title, story, location, travel_type, keywords, created_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())""",
+                (memory_id, body.journey_id, body.user_id, body.title, body.story, body.location or "", body.travel_type or "solo", json.dumps(body.keywords))
+            )
+            return {
+                "id": memory_id,
+                "title": body.title,
+                "story": body.story,
+                "location": body.location or "",
+                "travel_type": body.travel_type or "solo"
+            }
+
+
+@app.get("/api/anonymous-memories")
+async def list_anonymous_memories(travel_type: Optional[str] = Query(None)):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            if travel_type:
+                await cur.execute(
+                    "SELECT * FROM anonymous_memories WHERE travel_type = %s ORDER BY created_at DESC LIMIT 50",
+                    (travel_type,)
+                )
+            else:
+                await cur.execute("SELECT * FROM anonymous_memories ORDER BY created_at DESC LIMIT 50")
+            
+            rows = await cur.fetchall()
+            memories = []
+            for r in rows:
+                memories.append({
+                    "id": r[0],
+                    "title": r[3],
+                    "story": r[4] or "",
+                    "location": r[5] or "",
+                    "travel_type": r[6] or "solo",
+                    "keywords": json.loads(r[7]) if r[7] else [],
+                    "created_at": r[8].isoformat() if r[8] else ""
+                })
+            return memories
+
+
+@app.post("/api/memory-exchanges", status_code=201)
+async def create_memory_exchange(body: MemoryExchangeCreate):
+    if not body.user1_id or not body.memory1_id or not body.memory2_id:
+        raise HTTPException(status_code=400, detail="Missing required fields")
+    
+    exchange_id = str(uuid.uuid4())
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """INSERT INTO memory_exchanges (id, user1_id, user2_id, memory1_id, memory2_id, exchanged_at)
+                   VALUES (%s, %s, %s, %s, %s, NOW())""",
+                (exchange_id, body.user1_id, body.user2_id, body.memory1_id, body.memory2_id)
+            )
+            
+            # Get both memories
+            await cur.execute(
+                "SELECT * FROM anonymous_memories WHERE id IN (%s, %s)",
+                (body.memory1_id, body.memory2_id)
+            )
+            memories = await cur.fetchall()
+            
+            return {
+                "id": exchange_id,
+                "exchanged_at": datetime.utcnow().isoformat(),
+                "memories": [{"id": m[0], "title": m[3], "story": m[4] or "", "location": m[5] or ""} for m in memories]
+            }
+
+
+@app.get("/api/memory-exchanges/{user_id}")
+async def get_user_exchanges(user_id: str):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT * FROM memory_exchanges WHERE user1_id = %s OR user2_id = %s ORDER BY exchanged_at DESC",
+                (user_id, user_id)
+            )
+            rows = await cur.fetchall()
+            
+            exchanges = []
+            for r in rows:
+                # Get memories for this exchange
+                await cur.execute(
+                    "SELECT * FROM anonymous_memories WHERE id IN (%s, %s)",
+                    (r[3], r[4])
+                )
+                memories = await cur.fetchall()
+                
+                exchanges.append({
+                    "id": r[0],
+                    "exchanged_at": r[5].isoformat() if r[5] else "",
+                    "memories": [{"id": m[0], "title": m[3], "story": m[4] or "", "location": m[5] or ""} for m in memories]
+                })
+            return exchanges
+
+
+# ---------- Friends/Contacts ----------
+@app.post("/api/friends", status_code=201)
+async def add_friend(body: FriendCreate):
+    if not body.user_id or not body.friend_id:
+        raise HTTPException(status_code=400, detail="Missing user_id or friend_id")
+    
+    friend_id = str(uuid.uuid4())
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """INSERT INTO user_friends (id, user_id, friend_id, friend_name, friend_email, friend_avatar, status, added_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, 'active', NOW())""",
+                (friend_id, body.user_id, body.friend_id, body.friend_name or "", body.friend_email or "", body.friend_avatar or "")
+            )
+            return {
+                "id": friend_id,
+                "user_id": body.user_id,
+                "friend_id": body.friend_id,
+                "friend_name": body.friend_name or "",
+                "friend_email": body.friend_email or "",
+                "friend_avatar": body.friend_avatar or ""
+            }
+
+
+@app.get("/api/friends")
+async def list_friends(user_id: str = Query(...)):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT * FROM user_friends WHERE user_id = %s AND status = 'active' ORDER BY added_at DESC",
+                (user_id,)
+            )
+            rows = await cur.fetchall()
+            
+            friends = []
+            for r in rows:
+                friends.append({
+                    "id": r[0],
+                    "user_id": r[1],
+                    "friend_id": r[2],
+                    "friend_name": r[3] or "",
+                    "friend_email": r[4] or "",
+                    "friend_avatar": r[5] or "",
+                    "status": r[6],
+                    "added_at": r[7].isoformat() if r[7] else ""
+                })
+            return friends
+
+
+@app.delete("/api/friends/{friend_id}", status_code=204)
+async def delete_friend(friend_id: str):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM user_friends WHERE id = %s", (friend_id,))
+            return None
+
+
 # Healthcheck
 @app.get("/api/health")
 async def health():

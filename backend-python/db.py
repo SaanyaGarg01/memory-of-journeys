@@ -147,6 +147,147 @@ async def init_schema():
                 ) ENGINE=InnoDB;
                 """
             )
+            # memory_circles
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_circles (
+                  id CHAR(36) PRIMARY KEY,
+                  name VARCHAR(255) NOT NULL,
+                  description TEXT,
+                  owner_id VARCHAR(64) NOT NULL,
+                  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                  INDEX idx_memory_circles_owner (owner_id)
+                ) ENGINE=InnoDB;
+                """
+            )
+            # memory_circle_members
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_circle_members (
+                  id CHAR(36) PRIMARY KEY,
+                  circle_id CHAR(36) NOT NULL,
+                  user_id VARCHAR(64) NOT NULL,
+                  role VARCHAR(20) DEFAULT 'member',
+                  joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  INDEX idx_mcm_circle (circle_id),
+                  INDEX idx_mcm_user (user_id)
+                ) ENGINE=InnoDB;
+                """
+            )
+            # memory_circle_journeys
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_circle_journeys (
+                  id CHAR(36) PRIMARY KEY,
+                  circle_id CHAR(36) NOT NULL,
+                  journey_id CHAR(36) NOT NULL,
+                  shared_by VARCHAR(64) NOT NULL,
+                  shared_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  INDEX idx_mcj_circle (circle_id),
+                  INDEX idx_mcj_journey (journey_id)
+                ) ENGINE=InnoDB;
+                """
+            )
+            # collaborative_journals
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS collaborative_journals (
+                  id CHAR(36) PRIMARY KEY,
+                  title VARCHAR(255) NOT NULL,
+                  description TEXT,
+                  created_by VARCHAR(64) NOT NULL,
+                  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                  INDEX idx_cj_creator (created_by)
+                ) ENGINE=InnoDB;
+                """
+            )
+            # collaborative_journal_members
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS collaborative_journal_members (
+                  id CHAR(36) PRIMARY KEY,
+                  journal_id CHAR(36) NOT NULL,
+                  user_id VARCHAR(64) NOT NULL,
+                  user_name VARCHAR(255),
+                  role VARCHAR(20) DEFAULT 'contributor',
+                  joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  INDEX idx_cjm_journal (journal_id),
+                  INDEX idx_cjm_user (user_id)
+                ) ENGINE=InnoDB;
+                """
+            )
+            # collaborative_journal_entries
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS collaborative_journal_entries (
+                  id CHAR(36) PRIMARY KEY,
+                  journal_id CHAR(36) NOT NULL,
+                  user_id VARCHAR(64) NOT NULL,
+                  user_name VARCHAR(255),
+                  content TEXT NOT NULL,
+                  entry_type VARCHAR(20) DEFAULT 'text',
+                  image_url TEXT,
+                  location VARCHAR(255),
+                  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  INDEX idx_cje_journal (journal_id),
+                  INDEX idx_cje_user (user_id)
+                ) ENGINE=InnoDB;
+                """
+            )
+            # anonymous_memories
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS anonymous_memories (
+                  id CHAR(36) PRIMARY KEY,
+                  journey_id CHAR(36) NOT NULL,
+                  original_user_id VARCHAR(64) NOT NULL,
+                  title VARCHAR(255) NOT NULL,
+                  story TEXT NOT NULL,
+                  location VARCHAR(255),
+                  travel_type VARCHAR(50),
+                  keywords JSON,
+                  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  INDEX idx_am_journey (journey_id),
+                  INDEX idx_am_type (travel_type)
+                ) ENGINE=InnoDB;
+                """
+            )
+            # memory_exchanges
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_exchanges (
+                  id CHAR(36) PRIMARY KEY,
+                  user1_id VARCHAR(64) NOT NULL,
+                  user2_id VARCHAR(64) NOT NULL,
+                  memory1_id CHAR(36) NOT NULL,
+                  memory2_id CHAR(36) NOT NULL,
+                  exchanged_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  INDEX idx_me_user1 (user1_id),
+                  INDEX idx_me_user2 (user2_id)
+                ) ENGINE=InnoDB;
+                """
+            )
+            # user_friends
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_friends (
+                  id CHAR(36) PRIMARY KEY,
+                  user_id VARCHAR(64) NOT NULL,
+                  friend_id VARCHAR(64) NOT NULL,
+                  friend_name VARCHAR(255),
+                  friend_email VARCHAR(255),
+                  friend_avatar VARCHAR(500),
+                  status VARCHAR(20) DEFAULT 'active',
+                  added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  INDEX idx_user_friends_user (user_id),
+                  INDEX idx_user_friends_friend (friend_id),
+                  UNIQUE KEY uniq_user_friend (user_id, friend_id)
+                ) ENGINE=InnoDB;
+                """
+            )
+            print("✅ All database tables created successfully!")
 
 
 async def close_pool():

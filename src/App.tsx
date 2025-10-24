@@ -24,6 +24,9 @@ import MemoryTemperature from './components/MemoryTemperature';
 import FriendMemorySync from './components/FriendMemorySync';
 import MemoryWhispers from './components/MemoryWhispers';
 import HomeButton from './components/HomeButton';
+import MemoryCircles from './components/MemoryCircles';
+import CollaborativeJournal from './components/CollaborativeJournal';
+import AnonymousStoryExchange from './components/AnonymousStoryExchange';
 
 import { supabase, Journey, JourneyLeg } from './lib/supabase';
 import { getTravelDNA } from './utils/travelDNA';
@@ -37,7 +40,7 @@ import {
   getCulturalInsights,
 } from './utils/aiStoryGenerator';
 
-type View = 'hero' | 'create' | 'explore' | 'features' | 'profile' | 'album';
+type View = 'hero' | 'create' | 'explore' | 'features' | 'profile' | 'album' | 'circles' | 'collab' | 'exchange';
 type BonusFeatureView = 'overview' | 'postcards' | 'temperature' | 'voice' | 'gallery' | 'friends' | 'whispers';
 
 type ProfileData = {
@@ -535,6 +538,45 @@ useEffect(() => {
               📚 Photo Album
             </button>
 
+            <button
+              onClick={() => setView('circles')}
+              className={`px-4 py-2 rounded-lg font-medium transition-all duration-300 ${
+                view === 'circles'
+                  ? 'bg-blue-500 text-white'
+                  : theme === 'dark'
+                    ? 'text-gray-300 hover:bg-slate-800'
+                    : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              👥 Circles
+            </button>
+
+            <button
+              onClick={() => setView('collab')}
+              className={`px-4 py-2 rounded-lg font-medium transition-all duration-300 ${
+                view === 'collab'
+                  ? 'bg-purple-500 text-white'
+                  : theme === 'dark'
+                    ? 'text-gray-300 hover:bg-slate-800'
+                    : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              📖 Journals
+            </button>
+
+            <button
+              onClick={() => setView('exchange')}
+              className={`px-4 py-2 rounded-lg font-medium transition-all duration-300 ${
+                view === 'exchange'
+                  ? 'bg-orange-500 text-white'
+                  : theme === 'dark'
+                    ? 'text-gray-300 hover:bg-slate-800'
+                    : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              🔀 Exchange
+            </button>
+
             {/* Theme toggle */}
             <button
               onClick={toggleTheme}
@@ -588,6 +630,24 @@ useEffect(() => {
         {view === 'album' && (
           <div className="max-w-7xl mx-auto px-6 py-12">
             <PhotoAlbum user={user} />
+          </div>
+        )}
+
+        {view === 'circles' && (
+          <div className="max-w-7xl mx-auto px-6 py-12">
+            <MemoryCircles user={user} journeys={journeys} />
+          </div>
+        )}
+
+        {view === 'collab' && (
+          <div className="max-w-7xl mx-auto px-6 py-12">
+            <CollaborativeJournal user={user} />
+          </div>
+        )}
+
+        {view === 'exchange' && (
+          <div className="max-w-7xl mx-auto px-6 py-12">
+            <AnonymousStoryExchange user={user} journeys={journeys} />
           </div>
         )}
 
