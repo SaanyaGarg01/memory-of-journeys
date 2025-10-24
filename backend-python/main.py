@@ -1,5 +1,6 @@
 import uuid
 import json
+import random
 from datetime import date, datetime
 from typing import List, Optional
 import os
@@ -656,6 +657,27 @@ async def create_journey(body: JourneyCreateBody):
                     0,  # views_count
                 ),
             )
+            
+            # Auto-plant a flower in the garden if user is authenticated
+            if body.user_id and not body.user_id.startswith('anon_'):
+                plant_types = ['rose', 'tulip', 'sunflower', 'lotus', 'orchid', 'lily', 'daisy', 'cherry_blossom']
+                colors = ['#ef4444', '#f59e0b', '#eab308', '#22c55e', '#3b82f6', '#a855f7', '#ec4899', '#f472b6']
+                random_plant = random.choice(plant_types)
+                random_color = random.choice(colors)
+                
+                plant_id = str(uuid.uuid4())
+                position_x = random.randint(50, 750)
+                position_y = random.randint(50, 550)
+                
+                await cur.execute(
+                    """INSERT INTO memory_garden_plants 
+                       (id, user_id, journey_id, plant_type, plant_name, growth_stage, position_x, position_y, color) 
+                       VALUES (%s, %s, %s, %s, %s, 1, %s, %s, %s)""",
+                    (plant_id, body.user_id, journey_id, random_plant, body.title or random_plant,
+                     position_x, position_y, random_color)
+                )
+                
+                print(f"🌸 Planted {random_plant} for journey '{body.title}' at position ({position_x}, {position_y})")
             
             # Return the created journey
             return {
@@ -1319,6 +1341,66 @@ async def delete_friend(friend_id: str):
         async with conn.cursor() as cur:
             await cur.execute("DELETE FROM user_friends WHERE id = %s", (friend_id,))
             return None
+
+
+# ---------- Memory Garden ----------
+@app.get("/api/garden/{user_id}")
+async def get_garden(user_id: str):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT * FROM memory_garden_plants WHERE user_id = %s ORDER BY planted_at DESC",
+                (user_id,)
+            )
+            rows = await cur.fetchall()
+            
+            plants = []
+            for r in rows:
+                plants.append({
+                    "id": r[0],
+                    "user_id": r[1],
+                    "journey_id": r[2],
+                    "plant_type": r[3],
+                    "plant_name": r[4],
+                    "growth_stage": r[5],
+                    "planted_at": r[6].isoformat() if r[6] else None,
+                    "last_watered": r[7].isoformat() if r[7] else None,
+                    "position_x": r[8],
+                    "position_y": r[9],
+                    "color": r[10]
+                })
+            return plants
+
+
+@app.post("/api/garden/water/{plant_id}")
+async def water_plant(plant_id: str):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            # Get current plant
+            await cur.execute(
+                "SELECT * FROM memory_garden_plants WHERE id = %s",
+                (plant_id,)
+            )
+            row = await cur.fetchone()
+            
+            if not row:
+                raise HTTPException(status_code=404, detail="Plant not found")
+            
+            current_stage = row[5]
+            new_stage = min(current_stage + 1, 5)
+            
+            await cur.execute(
+                "UPDATE memory_garden_plants SET growth_stage = %s, last_watered = NOW() WHERE id = %s",
+                (new_stage, plant_id)
+            )
+            
+            return {
+                "id": plant_id,
+                "growth_stage": new_stage,
+                "last_watered": datetime.utcnow().isoformat()
+            }
 
 
 # Healthcheck

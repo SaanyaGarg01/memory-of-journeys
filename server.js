@@ -619,6 +619,26 @@ async function initSchema() {
         UNIQUE KEY uniq_user_friend (user_id, friend_id)
       ) ENGINE=InnoDB;
     `);
+    
+    // Memory Garden Plants
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS memory_garden_plants (
+        id CHAR(36) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL,
+        journey_id CHAR(36),
+        plant_type VARCHAR(50) NOT NULL,
+        plant_name VARCHAR(255),
+        growth_stage INT DEFAULT 1,
+        planted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_watered DATETIME DEFAULT CURRENT_TIMESTAMP,
+        position_x INT DEFAULT 0,
+        position_y INT DEFAULT 0,
+        color VARCHAR(20),
+        INDEX idx_garden_user (user_id),
+        INDEX idx_garden_journey (journey_id)
+      ) ENGINE=InnoDB;
+    `);
+    
     console.log('✅ MariaDB schema ready');
   } catch (err) {
     console.error('❌ MariaDB init error:', err);
@@ -670,6 +690,23 @@ app.post('/api/journeys', async (req, res) => {
         doc.visibility, doc.likes_count, doc.views_count
       ]
     );
+    
+    // Auto-plant a flower in the garden if user is authenticated
+    if (doc.user_id && !doc.user_id.startsWith('anon_')) {
+      const plantTypes = ['rose', 'tulip', 'sunflower', 'lotus', 'orchid', 'lily', 'daisy', 'cherry_blossom'];
+      const colors = ['#ef4444', '#f59e0b', '#eab308', '#22c55e', '#3b82f6', '#a855f7', '#ec4899', '#f472b6'];
+      const randomPlant = plantTypes[Math.floor(Math.random() * plantTypes.length)];
+      const randomColor = colors[Math.floor(Math.random() * colors.length)];
+      
+      const plantId = crypto.randomUUID();
+      await conn.query(
+        `INSERT INTO memory_garden_plants 
+         (id, user_id, journey_id, plant_type, plant_name, growth_stage, position_x, position_y, color) 
+         VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+        [plantId, doc.user_id, doc.id, randomPlant, j.title || randomPlant, 
+         Math.floor(Math.random() * 700) + 50, Math.floor(Math.random() * 500) + 50, randomColor]
+      );
+    }
 
     // Return normalized object matching frontend types
     const response = {
@@ -1288,6 +1325,60 @@ app.delete('/api/friends/:id', async (req, res) => {
   } catch (err) {
     console.error('❌ Delete friend failed:', err);
     res.status(500).json({ error: 'Failed to delete friend' });
+  } finally { if (conn) conn.release(); }
+});
+
+// ---- Memory Garden API ----
+app.get('/api/garden/:userId', async (req, res) => {
+  const userId = req.params.userId;
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const plants = await conn.query(
+      'SELECT * FROM memory_garden_plants WHERE user_id = ? ORDER BY planted_at DESC',
+      [userId]
+    );
+    res.json(plants.map(p => ({
+      id: p.id,
+      user_id: p.user_id,
+      journey_id: p.journey_id,
+      plant_type: p.plant_type,
+      plant_name: p.plant_name,
+      growth_stage: p.growth_stage,
+      planted_at: p.planted_at,
+      last_watered: p.last_watered,
+      position_x: p.position_x,
+      position_y: p.position_y,
+      color: p.color
+    })));
+  } catch (err) {
+    console.error('❌ Get garden failed:', err);
+    res.status(500).json({ error: 'Failed to get garden' });
+  } finally { if (conn) conn.release(); }
+});
+
+app.post('/api/garden/water/:plantId', async (req, res) => {
+  const plantId = req.params.plantId;
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    
+    // Get current plant
+    const plants = await conn.query('SELECT * FROM memory_garden_plants WHERE id = ?', [plantId]);
+    if (plants.length === 0) return res.status(404).json({ error: 'Plant not found' });
+    
+    const plant = plants[0];
+    const newStage = Math.min((plant.growth_stage || 1) + 1, 5);
+    
+    await conn.query(
+      'UPDATE memory_garden_plants SET growth_stage = ?, last_watered = NOW() WHERE id = ?',
+      [newStage, plantId]
+    );
+    
+    res.json({ id: plantId, growth_stage: newStage, last_watered: new Date() });
+  } catch (err) {
+    console.error('❌ Water plant failed:', err);
+    res.status(500).json({ error: 'Failed to water plant' });
   } finally { if (conn) conn.release(); }
 });
 

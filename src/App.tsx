@@ -27,6 +27,7 @@ import HomeButton from './components/HomeButton';
 import MemoryCircles from './components/MemoryCircles';
 import CollaborativeJournal from './components/CollaborativeJournal';
 import AnonymousStoryExchange from './components/AnonymousStoryExchange';
+import MemoryGarden from './components/MemoryGarden';
 
 import { supabase, Journey, JourneyLeg } from './lib/supabase';
 import { getTravelDNA } from './utils/travelDNA';
@@ -41,7 +42,7 @@ import {
 } from './utils/aiStoryGenerator';
 
 type View = 'hero' | 'create' | 'explore' | 'features' | 'profile' | 'album' | 'circles' | 'collab' | 'exchange';
-type BonusFeatureView = 'overview' | 'postcards' | 'temperature' | 'voice' | 'gallery' | 'friends' | 'whispers';
+type BonusFeatureView = 'overview' | 'postcards' | 'temperature' | 'voice' | 'gallery' | 'friends' | 'whispers' | 'garden';
 
 type ProfileData = {
   id: string;
@@ -983,6 +984,13 @@ useEffect(() => {
                 <div className="space-y-4">
                   <button onClick={() => setBonusFeatureView('overview')} className="text-slate-400 hover:text-white transition-colors">← Back to Bonus Features</button>
                   <MemoryWhispers journeys={journeys} />
+                </div>
+              )}
+
+              {bonusFeatureView === 'garden' && (
+                <div className="space-y-4">
+                  <button onClick={() => setBonusFeatureView('overview')} className="text-slate-400 hover:text-white transition-colors">← Back to Bonus Features</button>
+                  <MemoryGarden user={user} />
                 </div>
               )}
 

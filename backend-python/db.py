@@ -287,6 +287,26 @@ async def init_schema():
                 ) ENGINE=InnoDB;
                 """
             )
+            # memory_garden_plants
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_garden_plants (
+                  id CHAR(36) PRIMARY KEY,
+                  user_id VARCHAR(64) NOT NULL,
+                  journey_id CHAR(36),
+                  plant_type VARCHAR(50) NOT NULL,
+                  plant_name VARCHAR(255),
+                  growth_stage INT DEFAULT 1,
+                  planted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  last_watered DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  position_x INT DEFAULT 0,
+                  position_y INT DEFAULT 0,
+                  color VARCHAR(20),
+                  INDEX idx_garden_user (user_id),
+                  INDEX idx_garden_journey (journey_id)
+                ) ENGINE=InnoDB;
+                """
+            )
             print("✅ All database tables created successfully!")
 
 
